@@ -1,33 +1,50 @@
 ---
-import "../styles.css";
+import Sidebar from "../components/Sidebar.astro";
+import type { EntryKind } from "../lib/types";
 
 interface Props {
   title?: string;
   active?: "list" | "new" | "stats";
+  activeKind?: EntryKind;
+  activeTag?: string | null;
+  showingDeprecated?: boolean;
 }
-const { title = "KB", active } = Astro.props;
+const { title = "KB", active, activeKind, activeTag, showingDeprecated } = Astro.props;
 ---
-
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>{title} · KB</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=Geist+Mono:wght@400;500;600&family=Noto+Serif+SC:wght@500;600&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/styles/sakya-dorje.css" />
+    <link rel="stylesheet" href="/styles/kb.css" />
   </head>
   <body>
-    <div class="shell">
-      <header class="topbar">
-        <div>
-          <div class="brand">KB · v2.2</div>
-          <div class="sub">delta knowledge service</div>
+    <div class="app">
+      <Sidebar
+        active={active}
+        activeKind={activeKind}
+        activeTag={activeTag}
+        showingDeprecated={showingDeprecated}
+      />
+      <main class="main">
+        <div class="main-inner">
+          <slot />
         </div>
-        <nav>
-          <a href="/" class={active === "list" ? "active" : ""}>List</a>
-          <a href="/new" class={active === "new" ? "active" : ""}>New</a>
-          <a href="/stats" class={active === "stats" ? "active" : ""}>Stats</a>
-        </nav>
-      </header>
-      <slot />
+      </main>
     </div>
+
+    <!-- Cmd-K palette host (filled by client script). -->
+    <div id="cmdk-root" aria-hidden="true"></div>
+
+    <script>
+      import "../scripts/app.ts";
+    </script>
   </body>
 </html>

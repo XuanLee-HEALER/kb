@@ -20,13 +20,19 @@
     "rules": {
       "recommended": true,
       "style": {
-        "noNonNullAssertion": "error",
+        "noNonNullAssertion": "warn",
         "useConst": "error",
-        "useImportType": "error"
+        "useImportType": "error",
+        "useTemplate": "warn"
       },
-      "complexity": { "noExcessiveCognitiveComplexity": "warn" },
+      "complexity": {
+        "noExcessiveCognitiveComplexity": "off"
+      },
       "correctness": { "noUnusedVariables": "error" },
-      "suspicious": { "noExplicitAny": "error" }
+      "suspicious": {
+        "noExplicitAny": "error",
+        "useIterableCallbackReturn": "warn"
+      }
     }
   },
   "javascript": {

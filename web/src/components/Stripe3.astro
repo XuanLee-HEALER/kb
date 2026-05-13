@@ -1,0 +1,17 @@
+---
+interface Props {
+  vertical?: boolean;
+}
+const { vertical = true } = Astro.props;
+---
+{
+  vertical ? (
+    <span class="stripe3" aria-hidden="true">
+      <i /><i /><i />
+    </span>
+  ) : (
+    <span class="stripe3-h" aria-hidden="true">
+      <i /><i /><i />
+    </span>
+  )
+}

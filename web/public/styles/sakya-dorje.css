@@ -1,0 +1,79 @@
+/*
+ * Sakya Dorje — 网页配色方案
+ *
+ * 源自萨迦寺唐卡矿物颜料与五方佛色，已通过 Munsell 光谱仪数据校准。
+ * Dorje（金刚手菩萨 · Vajrapani）— 萨迦寺墙壁三色条纹之一的蓝黑。
+ *
+ * 使用方式：
+ *   <link rel="stylesheet" href="sakya-dorje.css">
+ *   或：@import url("sakya-dorje.css");
+ *
+ * 变量分为两层：
+ *   1. 语义变量（bg / fg / border / accent / status / interaction / special）——直接用于 UI
+ *   2. 文化色板（p-*）——矿物颜料原色，语义变量的来源
+ */
+
+:root {
+  /* ── 背景 · Background —— 金刚手蓝黑纵深 ── */
+  --sakya-bg-deepest:  #0C0C14;  /* Shunyata 空 · 最深层 */
+  --sakya-bg-deep:     #13131F;  /* Drak 岩 · 深层 */
+  --sakya-bg-base:     #1B1B2A;  /* Sa 土 · 主背景 */
+  --sakya-bg-surface0: #262638;  /* Tsen-kha 面〇 · 卡片、输入 */
+  --sakya-bg-surface1: #36364A;  /* Tsen-kha 面一 · 悬浮面板 */
+  --sakya-bg-surface2: #46465C;  /* Tsen-kha 面二 · 高亮行 */
+
+  /* ── 前景 · Foreground —— 慈悲之白三级梯度 ── */
+  --sakya-fg-primary:   #E8E0D4;  /* Karpo 白 · 主文字 */
+  --sakya-fg-secondary: #C4BCAE;  /* Dri-med 无垢 · 副文字 */
+  --sakya-fg-tertiary:  #9E978C;  /* Dul-ba 柔 · 占位、行号 */
+  --sakya-fg-disabled:  #686882;  /* Dul-ba 寂 · 禁用 */
+
+  /* ── 边框 · Border ── */
+  --sakya-border-subtle:  #262638;  /* 微妙分隔 */
+  --sakya-border-default: #36364A;  /* 默认边框 */
+  --sakya-border-strong:  #46465C;  /* 强边框 */
+  --sakya-border-focus:   #D2B45066; /* Gser 半透明 · 聚焦 */
+
+  /* ── 强调 · Accent —— 五方佛 + 金 ── */
+  --sakya-accent-primary:   #D2B450;  /* Gser 金粉 · 最神圣 */
+  --sakya-accent-secondary: #5B8AB8;  /* Ngonpo 石青 · 阿閦佛 */
+  --sakya-accent-tertiary:  #527559;  /* Spangma 石绿 · 孔雀石 */
+
+  /* ── 状态 · Status ── */
+  --sakya-status-success: #527559;  /* Ljangkhu 孔雀石 */
+  --sakya-status-warning: #9F7045;  /* Ngang-pa 土黄 */
+  --sakya-status-error:   #BB4441;  /* Mtshal 朱砂 */
+  --sakya-status-info:    #5B8AB8;  /* Ngonpo 石青 */
+
+  /* ── 交互 · Interaction ── */
+  --sakya-int-hover:    #262638;
+  --sakya-int-active:   #36364A;
+  --sakya-int-focus:    #D2B45033;  /* 聚焦环 */
+  --sakya-int-disabled: #565670;
+
+  /* ── 特殊 · Special ── */
+  --sakya-sp-selection:   #E0C88833;  /* Nyima 日光 · 选中 */
+  --sakya-sp-search:      #E0C88855;
+  --sakya-sp-diff-add:    #52755933;
+  --sakya-sp-diff-del:    #BB444133;
+  --sakya-sp-diff-mod:    #D2B45033;
+  --sakya-sp-link:        #5B8AB8;
+  --sakya-sp-cursor:      #D2B450;
+  --sakya-sp-cursor-line: #26263822;
+
+  /* ── 文化色板 · Cultural Palette —— 唐卡矿物颜料原色 ── */
+  --sakya-p-gser:     #D2B450;  /* 24K 金粉 */
+  --sakya-p-ngonpo:   #5B8AB8;  /* 石青 */
+  --sakya-p-ljangkhu: #527559;  /* 孔雀石 */
+  --sakya-p-serpo:    #A09058;  /* 雌黄 */
+  --sakya-p-marpo:    #BB4441;  /* 朱砂 */
+  --sakya-p-karpo:    #EFE2BE;  /* 铅白 */
+  --sakya-p-mtshal:   #BB4441;  /* 硫化汞 */
+  --sakya-p-mutsmen:  #2F3B5B;  /* 青金石 */
+  --sakya-p-likhri:   #E85600;  /* 铅丹 */
+  --sakya-p-ngangpa:  #9F7045;  /* 土黄 */
+  --sakya-p-spangma:  #527559;  /* 石绿 */
+  --sakya-p-tsingkha: #2B3560;  /* 靛蓝 */
+  --sakya-p-nyima:    #E0C888;  /* 日光 */
+  --sakya-p-metok:    #C88090;  /* 莲花粉 */
+}

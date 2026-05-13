@@ -1,6 +1,10 @@
 ---
 import Base from "../../layouts/Base.astro";
+import Stripe3 from "../../components/Stripe3.astro";
+import KindBadge from "../../components/KindBadge.astro";
+import KindFieldsForm from "../../components/KindFieldsForm.astro";
 import { kb } from "../../lib/kb-client";
+import { KINDS, KIND_META } from "../../lib/kind-meta";
 import type { Entry } from "../../lib/types";
 
 const { id } = Astro.params;
@@ -14,111 +18,129 @@ try {
   error = (e as Error).message;
 }
 
-function get(e: Entry, k: string): string {
-  const v = e[k];
-  if (Array.isArray(v)) return v.join("\n");
-  if (typeof v === "string") return v;
-  return "";
+let allTags: string[] = [];
+try {
+  const hits = await kb.search({ limit: 300 });
+  const s = new Set<string>();
+  for (const h of hits) for (const t of h.tags) s.add(t);
+  allTags = [...s].sort();
+} catch {
+  /* offline OK */
 }
 ---
 
-<Base title={`Edit · ${entry?.title ?? ""}`}>
-  <h1 class="h1">Edit entry</h1>
-  {error && <div class="callout">{error}</div>}
-  {
-    entry && (
+<Base title={entry ? `Edit · ${entry.title}` : "Edit"}>
+  <div data-page="edit">
+    {error && (
+      <div class="empty">
+        <Stripe3 vertical={false} />
+        <h3>Failed to load entry</h3>
+        <p>{error}</p>
+      </div>
+    )}
+    {entry && (
       <form action={`/api/entries/${entry.id}/update`} method="POST">
-        <p style="color: var(--text-muted); font-size: 12.5px;">
-          kind <code>{entry.kind}</code> is immutable — change via supersede instead.
-        </p>
+        <div class="ph">
+          <div class="ph-title">
+            <div class="ph-eyebrow">
+              <Stripe3 vertical={false} />
+              <span>edit · 修改</span>
+            </div>
+            <h1>
+              Editing <span class="mono-sub">{entry.title}</span>
+            </h1>
+            <div class="ph-sub">Kind is immutable. Changing kind requires a supersede.</div>
+          </div>
+          <div class="ph-actions">
+            <a class="btn ghost" href={`/entry/${entry.id}`}>Cancel</a>
+            <button type="submit" class="btn primary">
+              Save changes
+              <span style="font-family: var(--font-mono); font-size: 10.5px; opacity: .7; margin-left: 4px">⌘↵</span>
+            </button>
+          </div>
+        </div>
 
-        <label class="field" for="title">title</label>
-        <input id="title" name="title" type="text" value={entry.title} required />
+        <div class="form-grid">
+          <div>
+            <!-- Kind label (immutable on /edit) -->
+            <div class="fld" style="margin-bottom: 18px">
+              <div class="fld-label"><span>kind</span><span class="hint">immutable · 不可变</span></div>
+              <div style="display: flex; align-items: center; gap: 10px; padding: 6px 0">
+                <KindBadge kind={entry.kind} />
+                <span style="color: var(--sakya-fg-tertiary); font-family: var(--font-mono); font-size: 12px">
+                  {KIND_META[entry.kind].zh} · change requires supersede
+                </span>
+              </div>
+              <input type="hidden" name="kind" value={entry.kind} />
+            </div>
 
-        <label class="field" for="tags">tags</label>
-        <input id="tags" name="tags" type="text" value={entry.tags.join(", ")} />
+            <div class="fld">
+              <div class="fld-label"><span>title</span></div>
+              <input class="fld-input" name="title" required value={entry.title} style="font-size: 16px" />
+            </div>
 
-        <fieldset style="margin-top: 22px; border: 1px dashed var(--border); padding: 16px; border-radius: 6px;">
-          <legend style="padding: 0 8px; color: var(--gold); font-size: 12px; font-family: var(--font-mono);">
-            {entry.kind}
-          </legend>
-          <input type="hidden" name="kind" value={entry.kind} />
-          {
-            entry.kind === "Fact" && (
-              <>
-                <label class="field" for="claim">claim ◆</label>
-                <textarea id="claim" name="claim">{get(entry, "claim")}</textarea>
-              </>
-            )
-          }
-          {
-            entry.kind === "ProblemSolution" && (
-              <>
-                <label class="field" for="problem">problem</label>
-                <textarea id="problem" name="problem">{get(entry, "problem")}</textarea>
-                <label class="field" for="environment">environment</label>
-                <textarea id="environment" name="environment">{get(entry, "environment")}</textarea>
-                <label class="field" for="symptoms">symptoms ◆ (one per line)</label>
-                <textarea id="symptoms" name="symptoms">{get(entry, "symptoms")}</textarea>
-                <label class="field" for="root_cause">root_cause ◆</label>
-                <textarea id="root_cause" name="root_cause">{get(entry, "root_cause")}</textarea>
-                <label class="field" for="solution">solution</label>
-                <textarea id="solution" name="solution">{get(entry, "solution")}</textarea>
-                <label class="field" for="verification">verification</label>
-                <textarea id="verification" name="verification">{get(entry, "verification")}</textarea>
-              </>
-            )
-          }
-          {
-            entry.kind === "Lesson" && (
-              <>
-                <label class="field" for="trap">trap ◆</label>
-                <textarea id="trap" name="trap">{get(entry, "trap")}</textarea>
-                <label class="field" for="correction">correction</label>
-                <textarea id="correction" name="correction">{get(entry, "correction")}</textarea>
-                <label class="field" for="why">why</label>
-                <textarea id="why" name="why">{get(entry, "why")}</textarea>
-                <label class="field" for="lesson_context">context</label>
-                <textarea id="lesson_context" name="lesson_context">{get(entry, "context")}</textarea>
-              </>
-            )
-          }
-          {
-            entry.kind === "Decision" && (
-              <>
-                <label class="field" for="dec_context">context ◆</label>
-                <textarea id="dec_context" name="dec_context">{get(entry, "context")}</textarea>
-                <label class="field" for="decision">decision ◆</label>
-                <textarea id="decision" name="decision">{get(entry, "decision")}</textarea>
-                <label class="field" for="rationale">rationale</label>
-                <textarea id="rationale" name="rationale">{get(entry, "rationale")}</textarea>
-                <label class="field" for="tradeoffs">tradeoffs</label>
-                <textarea id="tradeoffs" name="tradeoffs">{get(entry, "tradeoffs")}</textarea>
-              </>
-            )
-          }
-          {
-            entry.kind === "Heuristic" && (
-              <>
-                <label class="field" for="problem_class">problem_class ◆</label>
-                <textarea id="problem_class" name="problem_class">{get(entry, "problem_class")}</textarea>
-                <label class="field" for="pattern">pattern ◆</label>
-                <textarea id="pattern" name="pattern">{get(entry, "pattern")}</textarea>
-                <label class="field" for="limits">limits</label>
-                <textarea id="limits" name="limits">{get(entry, "limits")}</textarea>
-              </>
-            )
-          }
-        </fieldset>
+            <div class="fld">
+              <div class="fld-label"><span>tags</span><span class="hint">domain/specific convention · 路径风格</span></div>
+              <div data-tag-input data-all-tags={JSON.stringify(allTags)}>
+                <input type="hidden" name="tags" value={JSON.stringify(entry.tags)} />
+              </div>
+            </div>
 
-        <label class="field" for="body">body</label>
-        <textarea id="body" name="body" style="min-height: 160px;">{entry.body}</textarea>
+            <div style="margin: 20px 0 14px; display: flex; align-items: center; gap: 10px; font-family: var(--font-mono); font-size: 10.5px; font-weight: 600; letter-spacing: .12em; text-transform: uppercase; color: var(--sakya-fg-tertiary); white-space: nowrap">
+              <Stripe3 vertical={false} />
+              <span>{entry.kind.toLowerCase()} fields · 字段</span>
+              <span style="flex: 1; height: 1px; background: var(--sakya-border-subtle); margin-left: 6px"></span>
+            </div>
 
-        <div class="actions">
-          <button type="submit" class="primary">Save</button>
-          <a href={`/entry/${entry.id}`} class="button">Cancel</a>
+            <!-- Only render the matching kind's field group on /edit -->
+            {KINDS.map((k) => {
+              if (k !== entry.kind) return null;
+              return <KindFieldsForm kind={k} prefill={entry as unknown as Record<string, unknown>} />;
+            })}
+            <script>
+              // Show the matching kind's field group (which renders with hidden by default).
+              document.querySelectorAll<HTMLElement>("[data-kind-fields]").forEach((g) => { g.hidden = false; });
+            </script>
+
+            <div class="fld" style="margin-top: 10px">
+              <div class="fld-label">
+                <span>body</span>
+                <span class="hint">
+                  markdown ·{" "}
+                  <code style="font-family: var(--font-mono); color: var(--kind-ps)">[[ULID]]</code> 引用其它条目
+                </span>
+              </div>
+              <textarea class="fld-textarea body" name="body">{entry.body}</textarea>
+            </div>
+
+            <div class="form-footer">
+              <div class="hint">
+                <span class="kbd">⌘↵</span> submit&nbsp;&nbsp;<span class="kbd">⎋</span> cancel
+              </div>
+              <div style="display: flex; gap: 8px">
+                <a class="btn ghost" href={`/entry/${entry.id}`}>Cancel</a>
+                <button type="submit" class="btn primary">Save changes</button>
+              </div>
+            </div>
+          </div>
+
+          <aside class="form-meta-side">
+            <h4><Stripe3 vertical={false} /> Hints</h4>
+            <p>
+              <strong style="color: var(--sakya-fg-primary)">Why this kind?</strong>
+              <br /><span style="color: var(--sakya-fg-secondary)">{KIND_META[entry.kind].blurb}</span>
+              <br />{KIND_META[entry.kind].blurbZh}
+            </p>
+            <p>
+              <strong style="color: var(--sakya-fg-primary)">◆ NK fields</strong>
+              <br /><span style="font-family: var(--font-mono); font-size: 11.5px; color: var(--sakya-fg-secondary)">{KIND_META[entry.kind].nkList.join(", ")}</span>
+              <br />These participate in dedup identity. Changes here may trigger duplicates.
+            </p>
+            <h4 style="margin-top: 4px">Version</h4>
+            <p>Saving creates v{entry.version + 1}; v{entry.version} is kept in entry_history.</p>
+          </aside>
         </div>
       </form>
-    )
-  }
+    )}
+  </div>
 </Base>

@@ -1,6 +1,11 @@
 ---
 import Base from "../../layouts/Base.astro";
+import Stripe3 from "../../components/Stripe3.astro";
+import KindBadge from "../../components/KindBadge.astro";
+import TagMini from "../../components/TagMini.astro";
+import KindFieldsDetail from "../../components/KindFieldsDetail.astro";
 import { kb } from "../../lib/kb-client";
+import { fmtDateLong } from "../../lib/kind-meta";
 import { render } from "../../lib/markdown";
 import type { Entry } from "../../lib/types";
 
@@ -9,120 +14,184 @@ if (!id) return Astro.redirect("/", 302);
 
 let entry: Entry | null = null;
 let error: string | null = null;
+let supersedee: { title: string } | null = null;
+
 try {
   entry = await kb.get(id);
+  if (entry.superseded_by) {
+    try {
+      const s = await kb.get(entry.superseded_by);
+      supersedee = { title: s.title };
+    } catch {
+      supersedee = null;
+    }
+  }
 } catch (e) {
   error = (e as Error).message;
 }
 
 const bodyHtml = entry?.body ? await render(entry.body) : "";
-
-function fieldsFor(e: Entry): Array<{ label: string; value: string }> {
-  switch (e.kind) {
-    case "Fact":
-      return [{ label: "claim", value: e.claim as string }];
-    case "ProblemSolution":
-      return [
-        { label: "problem", value: e.problem as string },
-        { label: "environment", value: e.environment as string },
-        { label: "symptoms", value: (e.symptoms as string[]).join("\n") },
-        { label: "root_cause", value: e.root_cause as string },
-        { label: "solution", value: e.solution as string },
-        ...(e.verification ? [{ label: "verification", value: e.verification as string }] : []),
-      ];
-    case "Lesson":
-      return [
-        { label: "trap", value: e.trap as string },
-        { label: "correction", value: e.correction as string },
-        { label: "why", value: e.why as string },
-        ...(e.context ? [{ label: "context", value: e.context as string }] : []),
-      ];
-    case "Decision":
-      return [
-        { label: "context", value: e.context as string },
-        { label: "decision", value: e.decision as string },
-        { label: "rationale", value: e.rationale as string },
-      ];
-    case "Heuristic":
-      return [
-        { label: "problem_class", value: e.problem_class as string },
-        { label: "pattern", value: e.pattern as string },
-        ...(e.limits ? [{ label: "limits", value: e.limits as string }] : []),
-      ];
-  }
-}
 ---
 
 <Base title={entry?.title ?? "Entry"}>
-  {error && <div class="callout">load failed: {error}</div>}
+  <div data-page="detail">
+    {error && (
+      <div class="empty">
+        <Stripe3 vertical={false} />
+        <h3>Failed to load entry</h3>
+        <p>{error}</p>
+      </div>
+    )}
 
-  {
-    entry && (
-      <article class="entry-detail">
-        <header>
-          <h1>{entry.title || "(untitled)"}</h1>
-          <div class="meta" style="display: flex; gap: 10px; align-items: baseline; color: var(--text-muted); font-family: var(--font-mono); font-size: 11px;">
-            <span class={`chip kind-${entry.kind}`}>{entry.kind}</span>
-            {entry.deprecated_at && <span class="chip deprecated">deprecated</span>}
-            <span>v{entry.version}</span>
-            <span>{entry.id}</span>
-            <span>updated {entry.updated_at.slice(0, 10)}</span>
-            <span style="margin-left: auto;">
-              <a href={`/edit/${entry.id}`}>edit</a>
-            </span>
+    {entry && (
+      <div>
+        <div class="dh">
+          <div class="breadcrumb">
+            <a href="/">← library</a>
+            <span>/</span>
+            <a href={`/?kind=${entry.kind}`}>{entry.kind}</a>
           </div>
-          {
-            entry.tags.length > 0 && (
-              <div class="chips" style="margin-top: 10px; display: flex; gap: 6px; flex-wrap: wrap;">
-                {entry.tags.map((t) => (
-                  <a class="chip tag" href={`/?tag=${encodeURIComponent(t)}`}>{t}</a>
-                ))}
+          <h1>{entry.title || "(untitled)"}</h1>
+          <div class="metarow">
+            <KindBadge kind={entry.kind} />
+            {entry.deprecated_at && (
+              <span class="kindfg-lesson" style="font-family: var(--font-mono); font-size: 11px; letter-spacing: .04em; text-transform: uppercase">
+                · deprecated
+              </span>
+            )}
+            <span>v{entry.version}</span>
+            <span class="sep">·</span>
+            <span>{fmtDateLong(entry.updated_at)}</span>
+            <span class="sep">·</span>
+            <span title={entry.id}>id&nbsp;<span style="color: var(--sakya-fg-secondary)">{entry.id}</span></span>
+            <span class="sep">·</span>
+            <span>source&nbsp;<span style="color: var(--sakya-fg-secondary)">{
+              typeof entry.source === "object" && entry.source ? (entry.source as { type: string }).type : "Human"
+            }</span></span>
+          </div>
+
+          {entry.tags.length > 0 && (
+            <div class="tagrow">
+              {entry.tags.map((t) => <TagMini tag={t} />)}
+            </div>
+          )}
+
+          {entry.deprecated_at && (
+            <div class="deprecated-callout">
+              <strong>⊘ Deprecated</strong>
+              <span>
+                — on {fmtDateLong(entry.deprecated_at)}.
+                {supersedee && entry.superseded_by && (
+                  <> Superseded by{" "}
+                    <a href={`/entry/${entry.superseded_by}`} style="color: var(--sakya-accent-primary)">
+                      {supersedee.title}
+                    </a>.
+                  </>
+                )}
+                {entry.deprecation_reason && <> Reason: {entry.deprecation_reason}.</>}
+              </span>
+            </div>
+          )}
+
+          <div class="actions">
+            <a class="btn ghost" href="/" title="Back (Esc)">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M19 12H5M12 5l-7 7 7 7" />
+              </svg>
+            </a>
+            {!entry.deprecated_at && (
+              <a class="btn" href={`/edit/${entry.id}`} data-edit-link>
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M12 20h9M16.5 3.5a2.121 2.121 0 113 3L7 19l-4 1 1-4z" />
+                </svg>
+                Edit <span class="kbd-inline">E</span>
+              </a>
+            )}
+            <div style="position: relative" data-menu-host>
+              <button type="button" class="btn ghost" data-menu-trigger aria-label="More">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                  <circle cx="5" cy="12" r="1.6" /><circle cx="12" cy="12" r="1.6" /><circle cx="19" cy="12" r="1.6" />
+                </svg>
+              </button>
+              <div class="menu" data-menu hidden>
+                <div class="menu-item" data-copy-ulid={entry.id} role="button" tabindex="0">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15V5a2 2 0 012-2h10" />
+                  </svg>
+                  Copy ULID
+                  <span class="kbd">⌘C</span>
+                </div>
+                {!entry.deprecated_at && (
+                  <a class="menu-item" href={`/new?supersedes=${entry.id}`}>
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <path d="M12 5v14M5 12l7 7 7-7" />
+                    </svg>
+                    Supersede with new…
+                  </a>
+                )}
+                {!entry.deprecated_at && <div class="menu-divider" />}
+                {!entry.deprecated_at && (
+                  <form
+                    method="POST"
+                    action={`/api/entries/${entry.id}/deprecate`}
+                    onsubmit="return confirm('Deprecate this entry? This is irreversible (use Supersede to recover later).');"
+                    style="margin: 0"
+                  >
+                    <input type="hidden" name="reason" value="manual deprecation" />
+                    <button type="submit" class="menu-item danger" style="width: 100%; text-align: left">
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2M6 6l1 14a2 2 0 002 2h6a2 2 0 002-2l1-14" />
+                      </svg>
+                      Deprecate…
+                    </button>
+                  </form>
+                )}
               </div>
-            )
-          }
-        </header>
-
-        {
-          entry.deprecated_at && (
-            <div class="callout">
-              <strong>Deprecated.</strong> {entry.deprecation_reason}
-              {entry.superseded_by && (
-                <>
-                  {" "}superseded by <a href={`/entry/${entry.superseded_by}`}>{entry.superseded_by}</a>
-                </>
-              )}
             </div>
-          )
-        }
+          </div>
+        </div>
 
-        {
-          fieldsFor(entry).map((f) => (
-            <div class="field-block">
-              <div class="label">◆ {f.label}</div>
-              <div class="value">{f.value}</div>
+        <div class="detail-grid two-col">
+          <div class="fields-pane">
+            <div class="field-col-h">
+              <Stripe3 vertical={false} />
+              <span>structured fields · 结构化字段</span>
             </div>
-          ))
-        }
-
-        {
-          entry.body && (
-            <section class="body">
-              <h2 class="h2">Body</h2>
-              <div set:html={bodyHtml} />
-            </section>
-          )
-        }
-
-        <section class="body" style="margin-top: 36px;">
-          <h2 class="h2">Lifecycle</h2>
-          <form action={`/api/entries/${entry.id}/deprecate`} method="POST" style="display: flex; gap: 10px; align-items: center;">
-            <input type="text" name="reason" placeholder="reason for deprecation" required style="flex: 1;" />
-            <button type="submit" class="danger" disabled={entry.deprecated_at != null}>
-              Deprecate
-            </button>
-          </form>
-        </section>
-      </article>
-    )
-  }
+            <KindFieldsDetail entry={entry} />
+          </div>
+          <div class="body-pane">
+            <div class="field-col-h">
+              <Stripe3 vertical={false} />
+              <span>body · 正文</span>
+            </div>
+            {entry.body && entry.body.trim() ? (
+              <div class="prose" set:html={bodyHtml} />
+            ) : (
+              <div class="body-empty">
+                No body — this entry's structured fields say all that needs saying.
+                <br />无正文:结构化字段已包含全部信息。
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    )}
+  </div>
 </Base>
+
+<script>
+  document.querySelectorAll<HTMLElement>("[data-copy-ulid]").forEach((el) => {
+    el.addEventListener("click", async () => {
+      const ulid = el.dataset.copyUlid;
+      if (!ulid) return;
+      try {
+        await navigator.clipboard.writeText(ulid);
+        const original = el.innerHTML;
+        el.innerHTML = el.innerHTML.replace("Copy ULID", "Copied ✓");
+        setTimeout(() => { el.innerHTML = original; }, 1200);
+      } catch {
+        /* clipboard unavailable */
+      }
+    });
+  });
+</script>
