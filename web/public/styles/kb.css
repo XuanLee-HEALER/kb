@@ -225,8 +225,12 @@ input:focus-visible, textarea:focus-visible, button:focus-visible, [role="button
   letter-spacing: .005em;
   transition: transform .12s var(--ease), filter .12s var(--ease);
 }
-.sb-new:hover { filter: brightness(1.05); }
-.sb-new:active { transform: translateY(.5px); }
+.sb-new:hover {
+  /* Override generic a:hover (gold = same as bg). Keep text dark, darken bg. */
+  color: #1a1605;
+  filter: brightness(0.88);
+}
+.sb-new:active { transform: translateY(.5px); filter: brightness(0.82); }
 .sb-new .kbd {
   font-family: var(--font-mono);
   font-size: 10.5px;

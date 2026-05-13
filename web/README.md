@@ -1,43 +1,32 @@
-# Astro Starter Kit: Minimal
+# web
 
-```sh
-bun create astro@latest -- --template minimal
+Hono on Bun · server-rendered TSX · zero client framework.
+
+## Layout
+
+```
+src/
+  server.tsx             Hono app — pages + api routes + static
+  components/            shared TSX (Layout, Sidebar, KindBadge, …)
+  pages/                 one .tsx per route (List, Detail, New, Edit, Stats, Duplicates)
+  lib/                   kb-client / types / kind-meta / form / markdown
+  scripts/app.ts         client-side JS (Cmd-K palette, tag chip input, etc.)
+public/
+  styles/{sakya-dorje,kb}.css   served at /styles/*
+  js/app.js              bundled from scripts/app.ts, served at /js/app.js
 ```
 
-> 🧑‍🚀 **Seasoned astronaut?** Delete this file. Have fun!
+## Commands
 
-## 🚀 Project Structure
+| | what |
+|---|---|
+| `bun run dev`           | build client bundle once, then `bun --hot src/server.tsx` |
+| `bun run dev:client`    | watch + rebuild the client bundle |
+| `bun run build`         | client bundle + `tsc --noEmit` |
+| `bun run start`         | production: `bun src/server.tsx` |
+| `bun run check`         | typecheck + biome |
+| `bun run lint:fix`      | biome auto-fix |
 
-Inside of your Astro project, you'll see the following folders and files:
+## Env
 
-```text
-/
-├── public/
-├── src/
-│   └── pages/
-│       └── index.astro
-└── package.json
-```
-
-Astro looks for `.astro` or `.md` files in the `src/pages/` directory. Each page is exposed as a route based on its file name.
-
-There's nothing special about `src/components/`, but that's where we like to put any Astro/React/Vue/Svelte/Preact components.
-
-Any static assets, like images, can be placed in the `public/` directory.
-
-## 🧞 Commands
-
-All commands are run from the root of the project, from a terminal:
-
-| Command                   | Action                                           |
-| :------------------------ | :----------------------------------------------- |
-| `bun install`             | Installs dependencies                            |
-| `bun dev`             | Starts local dev server at `localhost:4321`      |
-| `bun build`           | Build your production site to `./dist/`          |
-| `bun preview`         | Preview your build locally, before deploying     |
-| `bun astro ...`       | Run CLI commands like `astro add`, `astro check` |
-| `bun astro -- --help` | Get help using the Astro CLI                     |
-
-## 👀 Want to learn more?
-
-Feel free to check [our documentation](https://docs.astro.build) or jump into our [Discord server](https://astro.build/chat).
+`KB_URL` (default `http://127.0.0.1:5100`), `KB_TOKEN`, `PORT` (default `5101`).

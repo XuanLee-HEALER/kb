@@ -61,7 +61,7 @@ build-server:
 build-cli:
     cargo build --release --bin kb
 
-# Build the Astro app (SSR, node adapter).
+# Build the web app (Hono SSR on bun): client bundle + tsc typecheck.
 build-web:
     cd web && bun run build
 
@@ -126,10 +126,12 @@ dev:
     cargo run --bin kb-server &
     server_pid=$!
     sleep 1.5
-    echo "▶ astro dev   → http://127.0.0.1:${PORT}"
-    (cd web && bun run dev --port "${PORT}") &
+    echo "▶ web (hono)  → http://127.0.0.1:${PORT}"
+    (cd web && bun run dev) &
     web_pid=$!
-    wait "$server_pid" "$web_pid"
+    (cd web && bun run dev:client) &
+    cli_pid=$!
+    wait "$server_pid" "$web_pid" "$cli_pid"
 
 # Run only kb-server (debug build; auto-reloads if cargo-watch is installed).
 dev-server:
@@ -140,18 +142,18 @@ dev-server:
         cargo run --bin kb-server; \
     fi
 
-# Run only the Astro dev server. kb-server must already be running.
+# Run only the web server. kb-server must already be running.
 dev-web:
-    cd web && bun run dev --port "${PORT}"
+    cd web && bun run dev
 
 # Run the release binary locally (assumes `just build` has been run).
 serve:
     mkdir -p data
     ./target/release/kb-server
 
-# Run the Astro production build locally.
+# Run the production web server (assumes `just build-web` has produced public/js/app.js).
 serve-web:
-    cd web && bun ./dist/server/entry.mjs
+    cd web && bun src/server.tsx
 
 # ─── kb CLI ────────────────────────────────────────────────────────────────
 
@@ -204,10 +206,10 @@ skill-preview: build-skill
 
 # ─── clean ──────────────────────────────────────────────────────────────────
 
-# Remove all build artifacts (target, dist, .astro, release/, skill tarball).
+# Remove all build artifacts (target, web bundle, release/, skill tarball).
 clean:
     cargo clean
-    rm -rf web/dist web/.astro
+    rm -rf web/public/js
     rm -f skill/kb-skill.tar.gz
     rm -rf release
 

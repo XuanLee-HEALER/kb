@@ -7,7 +7,7 @@
   },
   "files": {
     "ignoreUnknown": true,
-    "includes": ["src/**/*.ts", "*.mjs", "*.json"]
+    "includes": ["src/**/*.ts", "src/**/*.tsx", "*.mjs", "*.json"]
   },
   "formatter": {
     "enabled": true,
@@ -19,6 +19,14 @@
     "enabled": true,
     "rules": {
       "recommended": true,
+      "a11y": {
+        "recommended": true,
+        "noSvgWithoutTitle": "warn",
+        "useSemanticElements": "warn",
+        "useFocusableInteractive": "warn",
+        "useAriaPropsSupportedByRole": "warn",
+        "useKeyWithClickEvents": "warn"
+      },
       "style": {
         "noNonNullAssertion": "warn",
         "useConst": "error",
@@ -28,7 +36,10 @@
       "complexity": {
         "noExcessiveCognitiveComplexity": "off"
       },
-      "correctness": { "noUnusedVariables": "error" },
+      "correctness": {
+        "noUnusedVariables": "error",
+        "useJsxKeyInIterable": "warn"
+      },
       "suspicious": {
         "noExplicitAny": "error",
         "useIterableCallbackReturn": "warn"
@@ -38,6 +49,7 @@
   "javascript": {
     "formatter": {
       "quoteStyle": "double",
+      "jsxQuoteStyle": "double",
       "semicolons": "always",
       "trailingCommas": "all"
     }

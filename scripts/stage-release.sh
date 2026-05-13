@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Stage a release tree under ./release/ that matches what CI produces.
-# Assumes `cargo build --release` and `bun run build` have already run.
+# Assumes:
+#   - `cargo build --release` has produced target/release/{kb-server,kb}
+#   - `bun run build` in web/ has produced public/js/app.js
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -20,22 +22,28 @@ if [ -z "$host_lib" ]; then
     exit 1
 fi
 
+if [ ! -f web/public/js/app.js ]; then
+    echo "✗ web/public/js/app.js missing — run 'bun run build' in web/" >&2
+    exit 1
+fi
+
 rm -rf release
-mkdir -p release/bin release/libsimple release/web release/skill
+mkdir -p release/bin release/libsimple release/web/src release/skill
 
 cp target/release/kb-server release/bin/
 cp target/release/kb release/bin/
 cp "$host_lib" release/libsimple/
 cp -r "$lib_dir/dict" release/libsimple/dict
 
-if [ ! -d web/dist ]; then
-    echo "✗ web/dist missing — run 'bun run build' in web/" >&2
-    exit 1
-fi
-cp -r web/dist/. release/web/
+# Web is a Hono-on-bun app: ship src/ + public/ + package.json. The runtime
+# invocation is `bun src/server.tsx`, no build artifact like dist/.
+cp -r web/src/. release/web/src/
+cp -r web/public release/web/public
+cp web/package.json release/web/
+cp web/bun.lock release/web/ 2>/dev/null || true
+cp web/tsconfig.json release/web/
 
 cp -r skill/. release/skill/
-# Drop the tarball if present; downstream tooling may want a fresh build.
 rm -f release/skill/kb-skill.tar.gz
 
 cp README.md release/
@@ -48,7 +56,10 @@ Layout
   bin/kb                      CLI client
   libsimple/<libsimple.so>    SQLite FTS5 extension (dylib on macOS)
   libsimple/dict/             jieba dictionaries
-  web/                        Astro SSR build — bun entry at server/entry.mjs
+  web/                        Hono-on-bun web app — `bun src/server.tsx`
+    web/src/                  source (TSX, bun compiles in-process)
+    web/public/               static assets (CSS, client JS bundle)
+    web/package.json          deps for `bun install`
   skill/                      Skill sources (run scripts/build-skill.sh to tarball)
 
 Runtime env
@@ -56,12 +67,13 @@ Runtime env
   KB_LIBSIMPLE_DICT=/opt/kb/libsimple/dict
   KB_DB=/var/lib/kb/kb.sqlite
   KB_TOKEN=<your-bearer-token>
-  KB_BIND=127.0.0.1:7890
+  KB_BIND=127.0.0.1:5100
   KB_SKILL_DIR=/opt/kb/skill
 
-Astro
-  cd web && PORT=3000 KB_URL=http://127.0.0.1:7890 KB_TOKEN=$KB_TOKEN \
-    bun ./server/entry.mjs
+Web (Hono on Bun)
+  cd web && bun install --frozen-lockfile
+  cd web && PORT=5101 KB_URL=http://127.0.0.1:5100 KB_TOKEN=$KB_TOKEN \
+    bun src/server.tsx
 EOF
 
 host=$(uname -s | tr '[:upper:]' '[:lower:]')

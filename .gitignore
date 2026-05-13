@@ -4,10 +4,10 @@ Cargo.lock.bak
 
 # Web
 web/node_modules
-web/.astro
-web/dist
 web/.env
 web/.env.local
+# Client JS bundle (built from src/scripts/app.ts via `bun run build:client`).
+web/public/js/
 
 # OS
 .DS_Store
