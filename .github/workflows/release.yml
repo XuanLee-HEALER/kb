@@ -5,6 +5,9 @@ on:
     tags: ["v*"]
   workflow_dispatch:
 
+permissions:
+  contents: write    # needed by softprops/action-gh-release to create/attach to the GitHub Release
+
 jobs:
   build-linux-x86_64:
     runs-on: ubuntu-latest
