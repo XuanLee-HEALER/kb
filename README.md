@@ -11,7 +11,7 @@ crates/
   kb-core/      schema、normalize_nk、Layer 1/2 类型 (13 unit tests)
   kb-server/    axum + rmcp + r2d2_sqlite (12 integration tests)
   kb-cli/       kb 二进制
-web/            Astro SSR + bun (列表/搜索/详情/新建/编辑/废弃/duplicates 流程)
+web/            Hono on Bun · TSX SSR (列表/搜索/详情/新建/编辑/废弃/duplicates 流程)
 skill/          SKILL.md + 7 examples + mcp.json 模板
 vendor/libsimple/  wangfenjin/simple 源码 vendor (build.rs 自动编)
 scripts/        build-skill.sh / stage-release.sh
@@ -27,7 +27,7 @@ just setup          # 一次性:校验依赖 + bun install + 建 data/
 just build          # cargo + web 全 release 编一遍 (首次包含 libsimple cmake)
 just test           # 25 个测试全跑
 just check          # 完整 CI 镜像:fmt-check + clippy + test + web check
-just dev            # kb-server + astro dev 并行,Ctrl+C 全杀
+just dev            # kb-server + hono web (bun --hot) + 客户端 watch 并行,Ctrl+C 全杀
 ```
 
 更多 recipe:`just` (无参数)。
@@ -40,7 +40,7 @@ just dev            # kb-server + astro dev 并行,Ctrl+C 全杀
 | `KB_DB`           | `data/kb.sqlite`              | SQLite 路径 (WAL 模式)               |
 | `KB_TOKEN`        | (dev 占位符)                  | bearer token,生产强烈建议设          |
 | `KB_URL`          | `http://127.0.0.1:5100`      | Web UI / CLI 指向的 kb-server         |
-| `PORT`            | `5101`                        | Astro web UI 监听端口                 |
+| `PORT`            | `5101`                        | web UI 监听端口                       |
 | `KB_SKILL_DIR`    | `./skill`                     | `/skill/*` 端点服务的目录             |
 | `KB_LIBSIMPLE_DIR`| 编译期嵌入                    | 运行时覆盖 libsimple.so 路径          |
 | `KB_LIBSIMPLE_DICT`| 编译期嵌入                   | 运行时覆盖 jieba dict 目录            |
