@@ -13,7 +13,7 @@ struct Cli {
     db: std::path::PathBuf,
 
     /// Bind address.
-    #[arg(long, env = "KB_BIND", default_value = "127.0.0.1:7890")]
+    #[arg(long, env = "KB_BIND", default_value = "127.0.0.1:5100")]
     bind: String,
 }
 

@@ -6,13 +6,13 @@ set dotenv-load := true
 set ignore-comments := true
 
 # ── Local defaults. Override per-recipe or via .env / shell env. ─────────────
-export KB_BIND        := env_var_or_default('KB_BIND',        '127.0.0.1:7890')
+export KB_BIND        := env_var_or_default('KB_BIND',        '127.0.0.1:5100')
 export KB_DB          := env_var_or_default('KB_DB',          'data/kb.sqlite')
 export KB_TOKEN       := env_var_or_default('KB_TOKEN',       'dev-only-token-change-me')
-export KB_URL         := env_var_or_default('KB_URL',         'http://127.0.0.1:7890')
+export KB_URL         := env_var_or_default('KB_URL',         'http://127.0.0.1:5100')
 export KB_SKILL_DIR   := env_var_or_default('KB_SKILL_DIR',   justfile_directory() + '/skill')
 export RUST_LOG       := env_var_or_default('RUST_LOG',       'info,kb_server=debug')
-export PORT           := env_var_or_default('PORT',           '3000')
+export PORT           := env_var_or_default('PORT',           '5101')
 
 # ─── meta ───────────────────────────────────────────────────────────────────
 

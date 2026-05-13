@@ -50,10 +50,14 @@ pub fn open_pool(db_path: &Path) -> Result<Pool> {
         Ok(())
     });
 
+    // min_idle(0) avoids the WAL-init race: r2d2's default eagerly creates
+    // max_size connections in parallel, all of which run `PRAGMA journal_mode=WAL`
+    // and emit a transient "database is locked" while one wins the journal lock.
+    // With min_idle=0 connections are created lazily, one at a time.
     let pool = r2d2::Pool::builder()
         .max_size(8)
-        .build(manager)
-        .context("building r2d2 pool")?;
+        .min_idle(Some(0))
+        .build_unchecked(manager);
 
     // Eager smoke test: open one connection now so misconfiguration fails fast.
     let _ = pool.get().context("acquiring initial sqlite connection")?;

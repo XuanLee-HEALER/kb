@@ -105,6 +105,26 @@ pub struct DeprecateOk {
     pub ok: bool,
 }
 
+// MCP outputSchema must have root `"type": "object"`. WriteResult is a
+// tagged enum (oneOf), Option<Entry> is anyOf/null, Vec<SearchHit> is an
+// array — none of those are objects at the root. Wrap them.
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct WriteOutput {
+    pub result: kb_core::WriteResult,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct GetOutput {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub entry: Option<kb_core::Entry>,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct SearchOutput {
+    pub hits: Vec<SearchHit>,
+}
+
 // =============================================================================
 // tool implementations
 // =============================================================================
@@ -117,34 +137,31 @@ impl KbHandler {
     async fn write(
         &self,
         Parameters(args): Parameters<WriteArgs>,
-    ) -> Result<Json<kb_core::WriteResult>, String> {
+    ) -> Result<Json<WriteOutput>, String> {
         let pool = self.state.pool.clone();
-        let res = tokio::task::spawn_blocking(move || {
+        let result = tokio::task::spawn_blocking(move || {
             let mut conn = pool.get().map_err(|e| format!("pool: {e}"))?;
             store::write(&mut conn, args.inner).map_err(|e| e.to_string())
         })
         .await
         .map_err(|e| format!("join: {e}"))??;
-        Ok(Json(res))
+        Ok(Json(WriteOutput { result }))
     }
 
     #[tool(description = "Fetch a single entry by ULID. Returns even deprecated entries.")]
-    async fn get(
-        &self,
-        Parameters(args): Parameters<GetArgs>,
-    ) -> Result<Json<Option<kb_core::Entry>>, String> {
+    async fn get(&self, Parameters(args): Parameters<GetArgs>) -> Result<Json<GetOutput>, String> {
         let id: Ulid = args
             .id
             .parse()
             .map_err(|e: ulid::DecodeError| e.to_string())?;
         let pool = self.state.pool.clone();
-        let res = tokio::task::spawn_blocking(move || {
+        let entry = tokio::task::spawn_blocking(move || {
             let conn = pool.get().map_err(|e| format!("pool: {e}"))?;
             store::get_by_ulid(&conn, id).map_err(|e| e.to_string())
         })
         .await
         .map_err(|e| format!("join: {e}"))??;
-        Ok(Json(res))
+        Ok(Json(GetOutput { entry }))
     }
 
     #[tool(
@@ -198,7 +215,7 @@ impl KbHandler {
     async fn search(
         &self,
         Parameters(args): Parameters<SearchArgs>,
-    ) -> Result<Json<Vec<SearchHit>>, String> {
+    ) -> Result<Json<SearchOutput>, String> {
         let q = SearchQuery {
             kinds: args.kinds,
             tag_prefixes: args.tag_prefixes,
@@ -213,14 +230,14 @@ impl KbHandler {
         })
         .await
         .map_err(|e| format!("join: {e}"))??;
-        Ok(Json(hits))
+        Ok(Json(SearchOutput { hits }))
     }
 
     #[tool(description = "Most recently updated entries.")]
     async fn recent(
         &self,
         Parameters(args): Parameters<RecentArgs>,
-    ) -> Result<Json<Vec<SearchHit>>, String> {
+    ) -> Result<Json<SearchOutput>, String> {
         let n = args.n.unwrap_or(20);
         let pool = self.state.pool.clone();
         let hits = tokio::task::spawn_blocking(move || {
@@ -229,7 +246,7 @@ impl KbHandler {
         })
         .await
         .map_err(|e| format!("join: {e}"))??;
-        Ok(Json(hits))
+        Ok(Json(SearchOutput { hits }))
     }
 
     #[tool(

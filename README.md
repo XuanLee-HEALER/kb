@@ -36,10 +36,11 @@ just dev            # kb-server + astro dev 并行,Ctrl+C 全杀
 
 | Var               | 默认                          | 说明                                  |
 | ----------------- | ----------------------------- | ------------------------------------- |
-| `KB_BIND`         | `127.0.0.1:7890`              | kb-server 监听地址                    |
+| `KB_BIND`         | `127.0.0.1:5100`              | kb-server 监听地址                    |
 | `KB_DB`           | `data/kb.sqlite`              | SQLite 路径 (WAL 模式)               |
 | `KB_TOKEN`        | (dev 占位符)                  | bearer token,生产强烈建议设          |
-| `KB_URL`          | `http://127.0.0.1:7890`      | Web UI / CLI 指向的 kb-server         |
+| `KB_URL`          | `http://127.0.0.1:5100`      | Web UI / CLI 指向的 kb-server         |
+| `PORT`            | `5101`                        | Astro web UI 监听端口                 |
 | `KB_SKILL_DIR`    | `./skill`                     | `/skill/*` 端点服务的目录             |
 | `KB_LIBSIMPLE_DIR`| 编译期嵌入                    | 运行时覆盖 libsimple.so 路径          |
 | `KB_LIBSIMPLE_DICT`| 编译期嵌入                   | 运行时覆盖 jieba dict 目录            |
