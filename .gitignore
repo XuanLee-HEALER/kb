@@ -17,6 +17,7 @@ web/.env.local
 # Local config
 /.env
 /data
+/.claude
 *.sqlite
 *.sqlite-journal
 *.sqlite-wal
