@@ -1,0 +1,35 @@
+/target
+**/*.rs.bk
+Cargo.lock.bak
+
+# Web
+web/node_modules
+web/.astro
+web/dist
+web/.env
+web/.env.local
+
+# OS
+.DS_Store
+*.swp
+*~
+
+# Local config
+/.env
+/data
+*.sqlite
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
+
+# Bun. bun.lock (text, modern) is checked in for reproducible installs;
+# bun.lockb (binary, legacy) is gitignored.
+bun.lockb
+.bun
+
+# Local release stage
+/release
+kb-release-*.tar.gz
+
+# Skill bundle artifact (built on demand)
+skill/kb-skill.tar.gz

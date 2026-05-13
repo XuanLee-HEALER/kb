@@ -1,0 +1,32 @@
+---
+import type { SearchHit } from "../lib/types";
+
+interface Props {
+  hit: SearchHit;
+}
+const { hit } = Astro.props;
+const isDeprecated = hit.deprecated_at != null;
+---
+
+<li>
+  <div class="entry-card">
+    <div class="title-row">
+      <a class="title" href={`/entry/${hit.id}`}>{hit.title || "(untitled)"}</a>
+      <div class="meta">
+        <span class={`chip kind-${hit.kind}`}>{hit.kind}</span>
+        {isDeprecated && <span class="chip deprecated">deprecated</span>}
+        <span>{hit.updated_at.slice(0, 10)}</span>
+      </div>
+    </div>
+    {hit.summary_line && <div class="summary">{hit.summary_line}</div>}
+    {
+      hit.tags.length > 0 && (
+        <div class="chips">
+          {hit.tags.map((t) => (
+            <span class="chip tag">{t}</span>
+          ))}
+        </div>
+      )
+    }
+  </div>
+</li>

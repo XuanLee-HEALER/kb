@@ -1,0 +1,103 @@
+---
+import EntryCard from "../components/EntryCard.astro";
+import Base from "../layouts/Base.astro";
+import { kb } from "../lib/kb-client";
+import { ALL_KINDS, type EntryKind, type SearchHit } from "../lib/types";
+
+const url = Astro.url;
+const q = url.searchParams.get("q") ?? "";
+const kindParam = url.searchParams.getAll("kind");
+const tag = url.searchParams.get("tag") ?? "";
+const includeDeprecated = url.searchParams.get("d") === "1";
+
+const kinds = kindParam.filter((k): k is EntryKind => ALL_KINDS.includes(k as EntryKind));
+const tagPrefixes = tag ? [tag] : [];
+
+let hits: SearchHit[] = [];
+let error: string | null = null;
+try {
+  hits = await kb.search({
+    kinds: kinds.length > 0 ? kinds : undefined,
+    tag_prefixes: tagPrefixes.length > 0 ? tagPrefixes : undefined,
+    query: q.trim() ? q : undefined,
+    limit: 50,
+    include_deprecated: includeDeprecated,
+  });
+} catch (e) {
+  error = (e as Error).message;
+}
+
+function kindUrl(k: EntryKind): string {
+  const u = new URL(url);
+  const existing = u.searchParams.getAll("kind");
+  u.searchParams.delete("kind");
+  const next = existing.includes(k) ? existing.filter((x) => x !== k) : [...existing, k];
+  for (const x of next) u.searchParams.append("kind", x);
+  return `${u.pathname}?${u.searchParams.toString()}`;
+}
+
+function toggleDeprecatedUrl(): string {
+  const u = new URL(url);
+  if (includeDeprecated) u.searchParams.delete("d");
+  else u.searchParams.set("d", "1");
+  return `${u.pathname}?${u.searchParams.toString()}`;
+}
+
+function clearTagUrl(): string {
+  const u = new URL(url);
+  u.searchParams.delete("tag");
+  return `${u.pathname}?${u.searchParams.toString()}`;
+}
+---
+
+<Base title="List" active="list">
+  <h1 class="h1">Entries</h1>
+
+  <form class="filters" method="get" action="/">
+    <input
+      type="search"
+      name="q"
+      value={q}
+      placeholder="FTS query (simple_query mode — wide recall)"
+    />
+    <button type="submit" class="primary">Search</button>
+    {tag && <input type="hidden" name="tag" value={tag} />}
+    {includeDeprecated && <input type="hidden" name="d" value="1" />}
+    {kinds.map((k) => <input type="hidden" name="kind" value={k} />)}
+  </form>
+
+  <div style="margin-bottom: 16px; display: flex; gap: 6px; flex-wrap: wrap;">
+    {
+      ALL_KINDS.map((k) => (
+        <a class={`chip kind-${k} ${kinds.includes(k) ? "active" : ""}`} href={kindUrl(k)}>
+          {k}
+        </a>
+      ))
+    }
+    <a class={`chip ${includeDeprecated ? "active" : ""}`} href={toggleDeprecatedUrl()}>
+      show deprecated
+    </a>
+    {
+      tag && (
+        <span class="chip tag">
+          tag: {tag}
+          <a href={clearTagUrl()} style="margin-left: 6px; color: var(--vermilion);">
+            ×
+          </a>
+        </span>
+      )
+    }
+  </div>
+
+  {error && <div class="callout">load failed: {error}</div>}
+
+  {
+    hits.length === 0 && !error ? (
+      <div class="empty">no entries match — write your first via /new</div>
+    ) : (
+      <ul class="entry-list">
+        {hits.map((hit) => <EntryCard hit={hit} />)}
+      </ul>
+    )
+  }
+</Base>

@@ -1,0 +1,128 @@
+---
+import Base from "../../layouts/Base.astro";
+import { kb } from "../../lib/kb-client";
+import { render } from "../../lib/markdown";
+import type { Entry } from "../../lib/types";
+
+const { id } = Astro.params;
+if (!id) return Astro.redirect("/", 302);
+
+let entry: Entry | null = null;
+let error: string | null = null;
+try {
+  entry = await kb.get(id);
+} catch (e) {
+  error = (e as Error).message;
+}
+
+const bodyHtml = entry?.body ? await render(entry.body) : "";
+
+function fieldsFor(e: Entry): Array<{ label: string; value: string }> {
+  switch (e.kind) {
+    case "Fact":
+      return [{ label: "claim", value: e.claim as string }];
+    case "ProblemSolution":
+      return [
+        { label: "problem", value: e.problem as string },
+        { label: "environment", value: e.environment as string },
+        { label: "symptoms", value: (e.symptoms as string[]).join("\n") },
+        { label: "root_cause", value: e.root_cause as string },
+        { label: "solution", value: e.solution as string },
+        ...(e.verification ? [{ label: "verification", value: e.verification as string }] : []),
+      ];
+    case "Lesson":
+      return [
+        { label: "trap", value: e.trap as string },
+        { label: "correction", value: e.correction as string },
+        { label: "why", value: e.why as string },
+        ...(e.context ? [{ label: "context", value: e.context as string }] : []),
+      ];
+    case "Decision":
+      return [
+        { label: "context", value: e.context as string },
+        { label: "decision", value: e.decision as string },
+        { label: "rationale", value: e.rationale as string },
+      ];
+    case "Heuristic":
+      return [
+        { label: "problem_class", value: e.problem_class as string },
+        { label: "pattern", value: e.pattern as string },
+        ...(e.limits ? [{ label: "limits", value: e.limits as string }] : []),
+      ];
+  }
+}
+---
+
+<Base title={entry?.title ?? "Entry"}>
+  {error && <div class="callout">load failed: {error}</div>}
+
+  {
+    entry && (
+      <article class="entry-detail">
+        <header>
+          <h1>{entry.title || "(untitled)"}</h1>
+          <div class="meta" style="display: flex; gap: 10px; align-items: baseline; color: var(--text-muted); font-family: var(--font-mono); font-size: 11px;">
+            <span class={`chip kind-${entry.kind}`}>{entry.kind}</span>
+            {entry.deprecated_at && <span class="chip deprecated">deprecated</span>}
+            <span>v{entry.version}</span>
+            <span>{entry.id}</span>
+            <span>updated {entry.updated_at.slice(0, 10)}</span>
+            <span style="margin-left: auto;">
+              <a href={`/edit/${entry.id}`}>edit</a>
+            </span>
+          </div>
+          {
+            entry.tags.length > 0 && (
+              <div class="chips" style="margin-top: 10px; display: flex; gap: 6px; flex-wrap: wrap;">
+                {entry.tags.map((t) => (
+                  <a class="chip tag" href={`/?tag=${encodeURIComponent(t)}`}>{t}</a>
+                ))}
+              </div>
+            )
+          }
+        </header>
+
+        {
+          entry.deprecated_at && (
+            <div class="callout">
+              <strong>Deprecated.</strong> {entry.deprecation_reason}
+              {entry.superseded_by && (
+                <>
+                  {" "}superseded by <a href={`/entry/${entry.superseded_by}`}>{entry.superseded_by}</a>
+                </>
+              )}
+            </div>
+          )
+        }
+
+        {
+          fieldsFor(entry).map((f) => (
+            <div class="field-block">
+              <div class="label">◆ {f.label}</div>
+              <div class="value">{f.value}</div>
+            </div>
+          ))
+        }
+
+        {
+          entry.body && (
+            <section class="body">
+              <h2 class="h2">Body</h2>
+              <div set:html={bodyHtml} />
+            </section>
+          )
+        }
+
+        <section class="body" style="margin-top: 36px;">
+          <h2 class="h2">Lifecycle</h2>
+          <form action={`/api/entries/${entry.id}/deprecate`} method="POST" style="display: flex; gap: 10px; align-items: center;">
+            <input type="text" name="reason" placeholder="reason for deprecation" required style="flex: 1;" />
+            <button type="submit" class="danger" disabled={entry.deprecated_at != null}>
+              Deprecate
+            </button>
+          </form>
+        </section>
+      </article>
+    )
+  }
+</Base>

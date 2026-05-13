@@ -1,0 +1,112 @@
+[workspace]
+resolver = "2"
+members = ["crates/kb-core", "crates/kb-server", "crates/kb-cli"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.83"
+license = "MIT"
+publish = false
+
+[workspace.lints.rust]
+# load_extension is FFI; allowed at the site, denied elsewhere.
+unsafe_code = "deny"
+missing_debug_implementations = "warn"
+rust_2018_idioms = { level = "warn", priority = -1 }
+
+[workspace.lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+todo = "warn"
+unimplemented = "warn"
+# Pedantic noise — opt out of common false-positives.
+module_name_repetitions = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+multiple_crate_versions = "allow"
+doc_markdown = "allow"
+missing_const_for_fn = "allow"
+must_use_candidate = "allow"
+cast_possible_truncation = "allow"
+cast_possible_wrap = "allow"
+cast_sign_loss = "allow"
+needless_pass_by_value = "allow"
+cognitive_complexity = "allow"
+too_many_lines = "allow"
+similar_names = "allow"
+struct_excessive_bools = "allow"
+fn_params_excessive_bools = "allow"
+option_if_let_else = "allow"
+redundant_closure_for_method_calls = "allow"
+significant_drop_tightening = "allow"
+or_fun_call = "allow"
+format_push_string = "allow"
+manual_let_else = "allow"
+missing_fields_in_debug = "allow"
+map_unwrap_or = "allow"
+wildcard_imports = "allow"
+single_match_else = "allow"
+items_after_statements = "allow"
+ignored_unit_patterns = "allow"
+match_wildcard_for_single_variants = "allow"
+unnecessary_wraps = "allow"
+unused_async = "allow"
+return_self_not_must_use = "allow"
+match_same_arms = "allow"
+# Test ergonomics — tests legitimately use these.
+unwrap_used = { level = "warn", priority = 1 }
+expect_used = { level = "warn", priority = 1 }
+panic = { level = "warn", priority = 1 }
+
+[workspace.dependencies]
+kb-core = { path = "crates/kb-core" }
+
+# runtime
+tokio = { version = "1", features = ["full"] }
+async-trait = "0.1"
+
+# serde
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# time / ids
+chrono = { version = "0.4", features = ["serde"] }
+ulid = { version = "1", features = ["serde"] }
+
+# crypto
+sha2 = "0.10"
+
+# sqlite
+rusqlite = { version = "0.38", features = ["bundled", "load_extension", "blob", "chrono", "serde_json"] }
+r2d2 = "0.8"
+r2d2_sqlite = "0.32"
+refinery = { version = "0.9", features = ["rusqlite"] }
+
+# error
+thiserror = "2"
+anyhow = "1"
+
+# http server (axum 0.8 to match rmcp)
+axum = { version = "0.8", features = ["macros", "json", "tokio"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["trace", "cors"] }
+hyper = "1"
+
+# mcp
+rmcp = { version = "1", features = ["server", "transport-streamable-http-server", "macros"] }
+schemars = { version = "1" }
+
+# misc
+clap = { version = "4", features = ["derive", "env"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+unicode-normalization = "0.1"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+toml = "0.8"
+dirs = "5"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"

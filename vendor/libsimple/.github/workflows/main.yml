@@ -1,0 +1,565 @@
+name: CI
+
+# Controls when the action will run. Triggers the workflow on push or pull request
+# events but only for the master branch
+on:
+  push:
+    branches: [ master ]
+    tags: [ '*' ]
+  pull_request:
+    branches: [ master ]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+  pull-requests: write
+
+# A workflow run is made up of one or more jobs that can run sequentially or in parallel
+jobs:
+  Windows:
+    runs-on: windows-latest
+    needs: Linux
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+        - arch: x86
+        - arch: x64
+        - arch: arm64
+
+    steps:
+    - name: "Set Build Type and Presets"
+      id: build_type
+      shell: pwsh
+      run: |
+        $buildType = if ("${{ github.ref }}".StartsWith("refs/tags/")) { "Release" } else { "Debug" }
+        echo "BUILD_TYPE=$buildType" >> $env:GITHUB_OUTPUT
+
+        $arch = "${{ matrix.arch }}"
+        switch ($arch) {
+          "x64" {
+            $configurePreset = "windows-msvc-vs17"
+            $buildDir = [System.IO.Path]::GetFullPath((Join-Path $env:GITHUB_WORKSPACE "..\..\_temp\windows-x64")).Replace('\', '/')
+          }
+          "x86" {
+            $configurePreset = "windows-msvc-vs17-x86"
+            $buildDir = [System.IO.Path]::GetFullPath((Join-Path $env:GITHUB_WORKSPACE "..\..\_temp\windows-x86")).Replace('\', '/')
+          }
+          "arm64" {
+            $configurePreset = "windows-msvc-vs17-arm64"
+            $buildDir = [System.IO.Path]::GetFullPath((Join-Path $env:GITHUB_WORKSPACE "..\..\_temp\windows-arm64")).Replace('\', '/')
+          }
+          default {
+            throw "Unsupported matrix.arch: $arch"
+          }
+        }
+
+        $buildPreset = if ($buildType -eq "Release") { "${configurePreset}-release" } else { $configurePreset }
+        echo "CONFIGURE_PRESET=$configurePreset" >> $env:GITHUB_OUTPUT
+        echo "BUILD_PRESET=$buildPreset" >> $env:GITHUB_OUTPUT
+        echo "BUILD_DIR=$buildDir" >> $env:GITHUB_OUTPUT
+
+    # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
+    - uses: actions/checkout@v6
+      with:
+        submodules: true
+
+    # - name: Install MSVC problem matcher
+    #   uses: ammaraskar/msvc-problem-matcher@master
+
+    # Install latest CMake
+    - uses: lukka/get-cmake@v4.2.0
+
+    # Restore from cache the previously built ports
+    - name: Restore artifacts, or setup vcpkg
+      uses: lukka/run-vcpkg@v11
+      with:
+        vcpkgDirectory: '${{ github.workspace }}/vcpkg'
+
+    # Add this to prevent storing partial cache in case of failure
+    - run: |
+        echo "RUNVCPKG_NO_CACHE=1" >> $GITHUB_ENV
+      if: ${{ failure() || cancelled() }}
+      shell: bash
+
+    - name: 'Run CMake'
+      uses: lukka/run-cmake@v10
+      continue-on-error: false
+      with:
+        configurePreset: ${{ steps.build_type.outputs.CONFIGURE_PRESET }}
+        buildPreset: ${{ steps.build_type.outputs.BUILD_PRESET }}
+
+    - name: "Check file existence"
+      uses: andstor/file-existence-action@v3
+      with:
+        allow_failure: true
+        files: "${{ steps.build_type.outputs.BUILD_DIR }}/src/${{ steps.build_type.outputs.BUILD_TYPE }}/simple.dll, ${{ steps.build_type.outputs.BUILD_DIR }}/cppjieba/src/cppjieba/dict/jieba.dict.utf8"
+
+    # can't build
+    # npm run
+    # - uses: actions/setup-node@v2
+    #   with:
+    #     node-version: '16'
+    # - name: run node example
+    #   working-directory: ./examples/node/
+    #   run: |
+    #     npm install
+    #     npm run p -- --ext_path="${{ github.workspace }}/../../_temp/windows/src/${{ steps.build_type.outputs.BUILD_TYPE }}/" --dict_path="${{ github.workspace }}/../../_temp/windows/cppjieba/src/cppjieba/dict/"
+
+    # - name: 'Run CTest'
+    #   run: ctest -C ${{ env.BUILD_TYPE }}
+    #   working-directory: "${{ github.workspace }}/../../_temp/windows"
+
+    # python run
+    # - uses: actions/setup-python@v4
+    #   with:
+    #     python-version: '3.x' # Version range or exact version of a Python version to use, using SemVer's version range syntax
+    # - name: run python example
+    #   working-directory: ./examples/python3/
+    #   run: python db_connector.py "${{ github.workspace }}/../../_temp/windows/src/${{ steps.build_type.outputs.BUILD_TYPE }}/simple"
+
+    - name: Package
+      if: startsWith(github.ref, 'refs/tags/')
+      run: |
+        $outputDir = "$env:GITHUB_WORKSPACE\artifacts"
+        New-Item -ItemType Directory -Path $outputDir -Force
+        mkdir libsimple-windows-${{ matrix.arch }}
+        Copy-Item -Path src/${{ steps.build_type.outputs.BUILD_TYPE }}/simple.dll,cppjieba/src/cppjieba/dict/ -Destination libsimple-windows-${{ matrix.arch }}/ -Recurse
+        Compress-Archive -Path libsimple-windows-${{ matrix.arch }} -DestinationPath "$outputDir\libsimple-windows-${{ matrix.arch }}.zip"
+      working-directory: "${{ steps.build_type.outputs.BUILD_DIR }}"
+    - name: Release
+      if: startsWith(github.ref, 'refs/tags/')
+      uses: softprops/action-gh-release@v2
+      with:
+        draft: true
+        files: "${{ github.workspace }}/artifacts/libsimple-windows-${{ matrix.arch }}.zip"
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  Linux:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: true
+      matrix:
+        os: [ubuntu-22.04, ubuntu-24.04-arm, ubuntu-latest]
+    timeout-minutes: 60
+    env:
+      BUILD_TYPE: ${{ startsWith(github.ref, 'refs/tags/') && 'Release' || 'Debug' }}
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        fetch-depth: 0
+        submodules: true
+
+    - name: Update apt-get
+      run: sudo apt-get update
+
+    - name: Install build tools
+      run: |
+        sudo apt-get install -y ninja-build
+        sudo apt-get install -y build-essential
+        sudo apt-get install -y gcc g++
+
+    - name: Restore artifacts, or setup vcpkg
+      uses: lukka/run-vcpkg@v11
+      with:
+        vcpkgDirectory: '${{ github.workspace }}/vcpkg'
+
+    - name: Install lcov
+      if: startsWith(github.ref, 'refs/tags/') != true
+      run: sudo apt-get install lcov
+
+    - run: |
+        echo "RUNVCPKG_NO_CACHE=1" >> $GITHUB_ENV
+      if: ${{ failure() || cancelled() }}
+      shell: bash
+
+    - name: 'Run CMake'
+      uses: lukka/run-cmake@v10
+      continue-on-error: false
+      with:
+        configurePreset: ${{ startsWith(github.ref, 'refs/tags/') && 'ninja-vcpkg-release' || 'ninja-vcpkg-coverage' }}
+        buildPreset: ${{ startsWith(github.ref, 'refs/tags/') && 'ninja-vcpkg-release' || 'ninja-vcpkg-coverage' }}
+
+    - name: 'Run CTest'
+      if: ${{ startsWith(github.ref, 'refs/tags/') != true && matrix.os == 'ubuntu-latest' }}
+      run: ctest -V -C ${{ env.BUILD_TYPE }}
+      working-directory: "${{ github.workspace }}/build"
+
+    # CODE COVERAGE
+    - name: Code coverage - Capture coverage info
+      if: ${{ startsWith(github.ref, 'refs/tags/') != true && matrix.os == 'ubuntu-latest' }}
+      run: lcov --directory . --capture --output-file coverage.info --ignore-errors mismatch
+    - name: Code coverage - Filter out system, external, and unit test source files
+      if: ${{ startsWith(github.ref, 'refs/tags/') != true && matrix.os == 'ubuntu-latest' }}
+      run: lcov --remove coverage.info --output-file coverage_filter.info '/Library/*' '/usr/*' '*/test/*' '*/cmrc/*' '*/entry.cc' '*/simple_highlight.*' --ignore-errors unused
+    - name: Code coverage - Output coverage data for debugging
+      if: ${{ startsWith(github.ref, 'refs/tags/') != true && matrix.os == 'ubuntu-latest' }}
+      run: lcov --list coverage_filter.info
+    - name: Code coverage - Upload to CodeCov
+      if: ${{ startsWith(github.ref, 'refs/tags/') != true && matrix.os == 'ubuntu-latest' }}
+      uses: codecov/codecov-action@v5
+      with:
+        files: coverage_filter.info
+        token: ${{ secrets.CODECOV_TOKEN }}
+        fail_ci_if_error: false
+        verbose: true
+
+    - name: "Check file existence"
+      uses: andstor/file-existence-action@v3
+      with:
+        allow_failure: true
+        files: "${{ github.workspace }}/build/src/libsimple.so, ${{ github.workspace }}/build/test/dict/jieba.dict.utf8"
+
+    # npm run
+    - uses: actions/setup-node@v6
+      if: startsWith(github.ref, 'refs/tags/') != true
+      with:
+        node-version: '20'
+    - name: run node example
+      if: startsWith(github.ref, 'refs/tags/') != true
+      working-directory: ./examples/node/
+      run: |
+        npm install
+        npm run p -- --ext_path="${{ github.workspace }}/build/src/" --dict_path="${{ github.workspace }}/build/test/dict/"
+        npm run b -- --ext_path="${{ github.workspace }}/build/src/" --dict_path="${{ github.workspace }}/build/test/dict/"
+
+    # python run
+    - uses: actions/setup-python@v6
+      if: startsWith(github.ref, 'refs/tags/') != true
+      with:
+        python-version: '3.13' # Version range or exact version of a Python version to use, using SemVer's version range syntax
+    - name: run python example
+      if: startsWith(github.ref, 'refs/tags/') != true
+      working-directory: ./examples/python3/
+      run: python db_connector.py "${{ github.workspace }}/build/src/libsimple"
+
+    # create release
+    - name: "Build Changelog"
+      id: build_changelog
+      if: ${{ startsWith(github.ref, 'refs/tags/') && matrix.os == 'ubuntu-latest' }}
+      uses: mikepenz/release-changelog-builder-action@v6
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    - name: Package
+      if: startsWith(github.ref, 'refs/tags/')
+      run: |
+        mkdir libsimple-linux-${{ matrix.os }}
+        cp -r src/libsimple.so test/dict/ libsimple-linux-${{ matrix.os }}/
+        zip -r libsimple-linux-${{ matrix.os }}.zip libsimple-linux-${{ matrix.os }}
+      working-directory: "${{ github.workspace }}/build"
+    - name: Release without changelog
+      if: ${{ startsWith(github.ref, 'refs/tags/') && matrix.os != 'ubuntu-latest' }}
+      uses: softprops/action-gh-release@v2
+      with:
+        draft: true
+        files: ${{ github.workspace }}/build/libsimple-linux-${{ matrix.os }}.zip
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    - name: Release
+      if: ${{ startsWith(github.ref, 'refs/tags/') && matrix.os == 'ubuntu-latest' }}
+      uses: softprops/action-gh-release@v2
+      with:
+        draft: true
+        files: ${{ github.workspace }}/build/libsimple-linux-${{ matrix.os }}.zip
+        body: ${{steps.build_changelog.outputs.changelog}}
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Build Summary
+      if: always()
+      run: |
+        echo "## Build Summary" >> $GITHUB_STEP_SUMMARY
+        echo "- Build Type: ${{ env.BUILD_TYPE }}" >> $GITHUB_STEP_SUMMARY
+        echo "- OS: ${{ runner.os }}" >> $GITHUB_STEP_SUMMARY
+
+  MacOS:
+    runs-on: ${{ matrix.os }}
+    needs: Linux
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+        - os: macos-15-intel
+          arch: x64
+        - os: macos-15
+          arch: arm64
+    env:
+      BUILD_TYPE: ${{ startsWith(github.ref, 'refs/tags/') && 'Release' || 'Debug' }}
+    steps:
+    - name: "Set macOS Build Presets"
+      id: mac_build
+      shell: bash
+      run: |
+        case "${{ matrix.arch }}" in
+          x64)
+            configure_preset="macos-ninja-x64"
+            build_dir="${GITHUB_WORKSPACE}/../../_temp/macos-x64"
+            ;;
+          arm64)
+            configure_preset="macos-ninja-arm64"
+            build_dir="${GITHUB_WORKSPACE}/../../_temp/macos-arm64"
+            ;;
+          *)
+            echo "Unsupported matrix.arch: ${{ matrix.arch }}" >&2
+            exit 1
+            ;;
+        esac
+
+        if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+          build_preset="${configure_preset}-release"
+        else
+          build_preset="${configure_preset}"
+        fi
+
+        echo "CONFIGURE_PRESET=${configure_preset}" >> "$GITHUB_OUTPUT"
+        echo "BUILD_PRESET=${build_preset}" >> "$GITHUB_OUTPUT"
+        echo "BUILD_DIR=${build_dir}" >> "$GITHUB_OUTPUT"
+
+    - uses: actions/checkout@v6
+      with:
+        submodules: true
+
+    # Install build tools
+    - name: Install Ninja
+      run: brew install ninja
+
+    # Restore from cache the previously built ports
+    - name: Restore artifacts, or setup vcpkg
+      uses: lukka/run-vcpkg@v11
+      with:
+        vcpkgDirectory: '${{ github.workspace }}/vcpkg'
+
+    # Add this to prevent storing partial cache in case of failure
+    - run: |
+        echo "RUNVCPKG_NO_CACHE=1" >> $GITHUB_ENV
+      if: ${{ failure() || cancelled() }}
+      shell: bash
+
+    - name: 'Run CMake'
+      uses: lukka/run-cmake@v10
+      with:
+        configurePreset: ${{ steps.mac_build.outputs.CONFIGURE_PRESET }}
+        buildPreset: ${{ steps.mac_build.outputs.BUILD_PRESET }}
+
+    - name: 'Run CTest'
+      run: ctest -C ${{ env.BUILD_TYPE }}
+      working-directory: "${{ steps.mac_build.outputs.BUILD_DIR }}"
+
+    - name: "Check file existence"
+      uses: andstor/file-existence-action@v3
+      with:
+        allow_failure: true
+        files: "${{ steps.mac_build.outputs.BUILD_DIR }}/src/libsimple.dylib, ${{ steps.mac_build.outputs.BUILD_DIR }}/test/dict/jieba.dict.utf8"
+    
+    - uses: actions/setup-node@v6
+      with:
+        node-version: '20'
+    
+    # - uses: actions/setup-python@v6
+    #   with:
+    #     python-version: '3.12' # Version range or exact version of a Python version to use, using SemVer's version range syntax
+    # npm run
+    - name: run node example
+      working-directory: ./examples/node/
+      run: |
+        brew install python-setuptools
+        npm install
+        npm run p -- --ext_path="${{ steps.mac_build.outputs.BUILD_DIR }}/src/" --dict_path="${{ steps.mac_build.outputs.BUILD_DIR }}/test/dict/"
+        # don't run this as it's toooo slow
+        # npm run b -- --ext_path="${{ steps.mac_build.outputs.BUILD_DIR }}/src/" --dict_path="${{ steps.mac_build.outputs.BUILD_DIR }}/test/dict/"
+
+    # python run
+    # - name: run python example
+    #   working-directory: ./examples/python3/
+    #   run: |
+    #     python db_connector.py "${{ github.workspace }}/../../_temp/macos/src/libsimple"
+  
+    - name: Package
+      if: startsWith(github.ref, 'refs/tags/')
+      run: |
+        mkdir libsimple-osx-${{ matrix.arch }}
+        sudo xattr -r -d com.apple.quarantine src/libsimple.dylib
+        cp -r src/libsimple.dylib test/dict libsimple-osx-${{ matrix.arch }}/
+        zip -r libsimple-osx-${{ matrix.arch }}.zip libsimple-osx-${{ matrix.arch }}
+      working-directory: "${{ steps.mac_build.outputs.BUILD_DIR }}"
+
+    - name: Release
+      if: startsWith(github.ref, 'refs/tags/')
+      uses: softprops/action-gh-release@v2
+      with:
+        draft: true
+        files: "${{ steps.mac_build.outputs.BUILD_DIR }}/libsimple-osx-${{ matrix.arch }}.zip"
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: build-iOS
+      if: ${{ success() && matrix.arch == 'arm64' }}
+      run: ./build-ios.sh
+
+    - name: Package iOS
+      if: ${{ startsWith(github.ref, 'refs/tags/') && matrix.arch == 'arm64' }}
+      run: |
+        mkdir libsimple-ios-xcframework
+        cp -r output/libsimple.xcframework output/dict libsimple-ios-xcframework/
+        zip -r libsimple-ios-xcframework.zip libsimple-ios-xcframework
+      working-directory: "${{ github.workspace }}"
+
+    - name: Release iOS
+      if: ${{ startsWith(github.ref, 'refs/tags/') && matrix.arch == 'arm64' }}
+      uses: softprops/action-gh-release@v2
+      with:
+        draft: true
+        files: "${{ github.workspace }}/libsimple-ios-xcframework.zip"
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  Android:
+    runs-on: ubuntu-latest
+    needs: Linux
+    strategy:
+      fail-fast: true
+      matrix:
+        abi: [arm64-v8a, x86_64]
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        submodules: true
+
+    - name: Resolve Android NDK
+      run: |
+        if [ -z "${ANDROID_NDK_LATEST_HOME:-}" ]; then
+          echo "ANDROID_NDK_LATEST_HOME is not available on this runner." >&2
+          exit 1
+        fi
+        echo "ANDROID_NDK_HOME=${ANDROID_NDK_LATEST_HOME}" >> "$GITHUB_ENV"
+
+    - name: Configure Android
+      run: |
+        cmake -S "${{ github.workspace }}" -B "${{ github.workspace }}/build-android-${{ matrix.abi }}" \
+          -DCMAKE_TOOLCHAIN_FILE="${ANDROID_NDK_HOME}/build/cmake/android.toolchain.cmake" \
+          -DANDROID_ABI="${{ matrix.abi }}" \
+          -DANDROID_PLATFORM=android-21 \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DCMAKE_INSTALL_PREFIX="${{ github.workspace }}/output-android-${{ matrix.abi }}" \
+          -DBUILD_TEST_EXAMPLE=OFF \
+          -DBUILD_SHELL=OFF
+
+    - name: Build Android
+      run: cmake --build "${{ github.workspace }}/build-android-${{ matrix.abi }}" --config Release --parallel
+
+    - name: Install Android
+      run: cmake --install "${{ github.workspace }}/build-android-${{ matrix.abi }}" --config Release
+
+    - name: Verify Android outputs
+      run: |
+        test -f "output-android-${{ matrix.abi }}/bin/libsimple.so"
+        test -f "output-android-${{ matrix.abi }}/bin/dict/jieba.dict.utf8"
+
+    - name: Package Android
+      if: startsWith(github.ref, 'refs/tags/')
+      run: |
+        mkdir "libsimple-android-${{ matrix.abi }}"
+        cp -r "output-android-${{ matrix.abi }}/bin/libsimple.so" "output-android-${{ matrix.abi }}/bin/dict" "libsimple-android-${{ matrix.abi }}/"
+        zip -r "libsimple-android-${{ matrix.abi }}.zip" "libsimple-android-${{ matrix.abi }}"
+      working-directory: "${{ github.workspace }}"
+
+    - name: Release Android
+      if: startsWith(github.ref, 'refs/tags/')
+      uses: softprops/action-gh-release@v2
+      with:
+        draft: true
+        files: "${{ github.workspace }}/libsimple-android-${{ matrix.abi }}.zip"
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  OHOS:
+    runs-on: ubuntu-latest
+    needs: Linux
+    env:
+      OHOS_SDK_URL: ${{ secrets.OHOS_SDK_URL }}
+      OHOS_SDK_VERSION: v6.0.0.1
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        submodules: true
+
+    - name: Download and extract OHOS SDK
+      shell: bash
+      run: |
+        set -euxo pipefail
+        sdk_root="${RUNNER_TEMP}/ohos-sdk"
+        sdk_archive="${RUNNER_TEMP}/ohos-sdk.tar.gz"
+        mkdir -p "${sdk_root}"
+
+        if [ -n "${OHOS_SDK_URL:-}" ]; then
+          curl -L --retry 3 --retry-all-errors --max-time 3600 "${OHOS_SDK_URL}" -o "${sdk_archive}"
+        else
+          sdk_base_url="https://github.com/openharmony-rs/ohos-sdk/releases/download/${OHOS_SDK_VERSION}"
+          curl -L --retry 3 --retry-all-errors --max-time 3600 "${sdk_base_url}/ohos-sdk-windows_linux-public.tar.gz.aa" -o "${sdk_archive}.aa"
+          curl -L --retry 3 --retry-all-errors --max-time 3600 "${sdk_base_url}/ohos-sdk-windows_linux-public.tar.gz.ab" -o "${sdk_archive}.ab"
+          cat "${sdk_archive}.aa" "${sdk_archive}.ab" > "${sdk_archive}"
+        fi
+
+        tar -xzf "${sdk_archive}" -C "${sdk_root}"
+
+        toolchain_file="$(find "${sdk_root}" -type f -path '*/native/build/cmake/ohos.toolchain.cmake' | head -n 1 || true)"
+        if [ -z "${toolchain_file}" ]; then
+          mapfile -t zips < <(find "${sdk_root}" -type f -name '*.zip')
+          if [ "${#zips[@]}" -eq 0 ]; then
+            echo "No SDK zip files found under ${sdk_root}." >&2
+            find "${sdk_root}" -maxdepth 4 -print
+            exit 1
+          fi
+
+          # Fast path: native build only needs Linux native/toolchains SDK packages.
+          mapfile -t preferred_zips < <(printf '%s\n' "${zips[@]}" | grep -E '/linux/(native|toolchains)-linux-x64-.*\.zip$' || true)
+          if [ "${#preferred_zips[@]}" -gt 0 ]; then
+            for f in "${preferred_zips[@]}"; do unzip -q -o "${f}" -d "$(dirname "${f}")"; done
+          else
+            for f in "${zips[@]}"; do unzip -q -o "${f}" -d "$(dirname "${f}")"; done
+          fi
+
+          toolchain_file="$(find "${sdk_root}" -type f -path '*/native/build/cmake/ohos.toolchain.cmake' | head -n 1 || true)"
+          if [ -z "${toolchain_file}" ]; then
+            for f in "${zips[@]}"; do unzip -q -o "${f}" -d "$(dirname "${f}")"; done
+            toolchain_file="$(find "${sdk_root}" -type f -path '*/native/build/cmake/ohos.toolchain.cmake' | head -n 1 || true)"
+          fi
+        fi
+
+        if [ -z "${toolchain_file}" ]; then
+          echo "Failed to locate OHOS toolchain after extraction." >&2
+          find "${sdk_root}" -maxdepth 5 -print
+          exit 1
+        fi
+
+        ohos_sdk="${toolchain_file%/native/build/cmake/ohos.toolchain.cmake}"
+        echo "OHOS_SDK=${ohos_sdk}" >> "${GITHUB_ENV}"
+
+    - name: Build OHOS
+      run: ./build-ohos.sh
+
+    - name: Verify OHOS outputs
+      run: |
+        test -f "output/bin/libsimple.so"
+        test -f "output/bin/dict/jieba.dict.utf8"
+
+    - name: Package OHOS
+      if: startsWith(github.ref, 'refs/tags/')
+      run: |
+        mkdir libsimple-ohos-arm64-v8a
+        cp -r output/bin/libsimple.so output/bin/dict libsimple-ohos-arm64-v8a/
+        zip -r libsimple-ohos-arm64-v8a.zip libsimple-ohos-arm64-v8a
+      working-directory: "${{ github.workspace }}"
+
+    - name: Release OHOS
+      if: startsWith(github.ref, 'refs/tags/')
+      uses: softprops/action-gh-release@v2
+      with:
+        draft: true
+        files: "${{ github.workspace }}/libsimple-ohos-arm64-v8a.zip"
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,0 +1,33 @@
+---
+import "../styles.css";
+
+interface Props {
+  title?: string;
+  active?: "list" | "new" | "stats";
+}
+const { title = "KB", active } = Astro.props;
+---
+
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{title} · KB</title>
+  </head>
+  <body>
+    <div class="shell">
+      <header class="topbar">
+        <div>
+          <div class="brand">KB · v2.2</div>
+          <div class="sub">delta knowledge service</div>
+        </div>
+        <nav>
+          <a href="/" class={active === "list" ? "active" : ""}>List</a>
+          <a href="/new" class={active === "new" ? "active" : ""}>New</a>
+          <a href="/stats" class={active === "stats" ? "active" : ""}>Stats</a>
+        </nav>
+      </header>
+      <slot />
+    </div>
+  </body>
+</html>

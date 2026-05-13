@@ -1,0 +1,48 @@
+[package]
+name = "kb-server"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "kb-server"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+kb-core.workspace = true
+
+tokio.workspace = true
+async-trait.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+ulid.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+anyhow.workspace = true
+
+rusqlite.workspace = true
+r2d2.workspace = true
+r2d2_sqlite.workspace = true
+refinery.workspace = true
+
+axum.workspace = true
+tower.workspace = true
+tower-http.workspace = true
+hyper.workspace = true
+
+rmcp.workspace = true
+schemars.workspace = true
+
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+clap.workspace = true
+
+[dev-dependencies]
+tempfile = "3"

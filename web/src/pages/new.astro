@@ -1,0 +1,103 @@
+---
+import Base from "../layouts/Base.astro";
+import { ALL_KINDS } from "../lib/types";
+
+const url = Astro.url;
+const presetKind = url.searchParams.get("kind") ?? "ProblemSolution";
+---
+
+<Base title="New" active="new">
+  <h1 class="h1">New entry</h1>
+  <p style="color: var(--text-muted); font-size: 13px; margin-bottom: 18px;">
+    Write only if a generic LLM <strong>can't answer correctly without consulting docs</strong>.
+    Otherwise this is noise.
+  </p>
+
+  <form action="/api/write" method="POST">
+    <label class="field" for="kind">kind</label>
+    <select id="kind" name="kind" required>
+      {ALL_KINDS.map((k) => <option value={k} selected={k === presetKind}>{k}</option>)}
+    </select>
+
+    <label class="field" for="title">title</label>
+    <input id="title" name="title" type="text" required />
+
+    <label class="field" for="tags">tags (comma-sep, path-style: <code>domain/specific</code>)</label>
+    <input id="tags" name="tags" type="text" placeholder="rust/tokio, network/wireguard" />
+
+    <fieldset style="margin-top: 22px; border: 1px dashed var(--border); padding: 16px; border-radius: 6px;">
+      <legend style="padding: 0 8px; color: var(--gold); font-size: 12px; font-family: var(--font-mono);">
+        type-specific
+      </legend>
+
+      <details open>
+        <summary style="color: var(--text-muted); cursor: pointer; font-size: 12px; font-family: var(--font-mono);">Fact</summary>
+        <label class="field" for="claim">claim ◆</label>
+        <textarea id="claim" name="claim"></textarea>
+        <label class="field" for="evidence">evidence (one per line: KIND::content; e.g. <code>Output::strace -p 1234 ...</code>)</label>
+        <textarea id="evidence" name="evidence"></textarea>
+      </details>
+
+      <details>
+        <summary style="color: var(--text-muted); cursor: pointer; font-size: 12px; font-family: var(--font-mono); margin-top: 12px;">ProblemSolution</summary>
+        <label class="field" for="problem">problem</label>
+        <textarea id="problem" name="problem"></textarea>
+        <label class="field" for="environment">environment</label>
+        <textarea id="environment" name="environment"></textarea>
+        <label class="field" for="symptoms">symptoms ◆ (one per line)</label>
+        <textarea id="symptoms" name="symptoms"></textarea>
+        <label class="field" for="root_cause">root_cause ◆</label>
+        <textarea id="root_cause" name="root_cause"></textarea>
+        <label class="field" for="solution">solution</label>
+        <textarea id="solution" name="solution"></textarea>
+        <label class="field" for="verification">verification</label>
+        <textarea id="verification" name="verification"></textarea>
+      </details>
+
+      <details>
+        <summary style="color: var(--text-muted); cursor: pointer; font-size: 12px; font-family: var(--font-mono); margin-top: 12px;">Lesson</summary>
+        <label class="field" for="trap">trap ◆</label>
+        <textarea id="trap" name="trap"></textarea>
+        <label class="field" for="correction">correction</label>
+        <textarea id="correction" name="correction"></textarea>
+        <label class="field" for="why">why</label>
+        <textarea id="why" name="why"></textarea>
+        <label class="field" for="lesson_context">context (optional)</label>
+        <textarea id="lesson_context" name="lesson_context"></textarea>
+      </details>
+
+      <details>
+        <summary style="color: var(--text-muted); cursor: pointer; font-size: 12px; font-family: var(--font-mono); margin-top: 12px;">Decision</summary>
+        <label class="field" for="dec_context">context ◆</label>
+        <textarea id="dec_context" name="dec_context"></textarea>
+        <label class="field" for="decision">decision ◆</label>
+        <textarea id="decision" name="decision"></textarea>
+        <label class="field" for="rationale">rationale</label>
+        <textarea id="rationale" name="rationale"></textarea>
+        <label class="field" for="tradeoffs">tradeoffs (one per line)</label>
+        <textarea id="tradeoffs" name="tradeoffs"></textarea>
+      </details>
+
+      <details>
+        <summary style="color: var(--text-muted); cursor: pointer; font-size: 12px; font-family: var(--font-mono); margin-top: 12px;">Heuristic</summary>
+        <label class="field" for="problem_class">problem_class ◆</label>
+        <textarea id="problem_class" name="problem_class"></textarea>
+        <label class="field" for="pattern">pattern ◆</label>
+        <textarea id="pattern" name="pattern"></textarea>
+        <label class="field" for="limits">limits</label>
+        <textarea id="limits" name="limits"></textarea>
+      </details>
+    </fieldset>
+
+    <label class="field" for="body">body (markdown · <code>[[ULID]]</code> for cross-refs)</label>
+    <textarea id="body" name="body" style="min-height: 160px;"></textarea>
+
+    <label class="field" for="supersedes">supersedes (optional ULID — atomic write + deprecate)</label>
+    <input id="supersedes" name="supersedes" type="text" />
+
+    <div class="actions">
+      <button type="submit" class="primary">Write</button>
+      <a href="/" class="button">Cancel</a>
+    </div>
+  </form>
+</Base>

@@ -1,0 +1,124 @@
+---
+import Base from "../../layouts/Base.astro";
+import { kb } from "../../lib/kb-client";
+import type { Entry } from "../../lib/types";
+
+const { id } = Astro.params;
+if (!id) return Astro.redirect("/", 302);
+
+let entry: Entry | null = null;
+let error: string | null = null;
+try {
+  entry = await kb.get(id);
+} catch (e) {
+  error = (e as Error).message;
+}
+
+function get(e: Entry, k: string): string {
+  const v = e[k];
+  if (Array.isArray(v)) return v.join("\n");
+  if (typeof v === "string") return v;
+  return "";
+}
+---
+
+<Base title={`Edit · ${entry?.title ?? ""}`}>
+  <h1 class="h1">Edit entry</h1>
+  {error && <div class="callout">{error}</div>}
+  {
+    entry && (
+      <form action={`/api/entries/${entry.id}/update`} method="POST">
+        <p style="color: var(--text-muted); font-size: 12.5px;">
+          kind <code>{entry.kind}</code> is immutable — change via supersede instead.
+        </p>
+
+        <label class="field" for="title">title</label>
+        <input id="title" name="title" type="text" value={entry.title} required />
+
+        <label class="field" for="tags">tags</label>
+        <input id="tags" name="tags" type="text" value={entry.tags.join(", ")} />
+
+        <fieldset style="margin-top: 22px; border: 1px dashed var(--border); padding: 16px; border-radius: 6px;">
+          <legend style="padding: 0 8px; color: var(--gold); font-size: 12px; font-family: var(--font-mono);">
+            {entry.kind}
+          </legend>
+          <input type="hidden" name="kind" value={entry.kind} />
+          {
+            entry.kind === "Fact" && (
+              <>
+                <label class="field" for="claim">claim ◆</label>
+                <textarea id="claim" name="claim">{get(entry, "claim")}</textarea>
+              </>
+            )
+          }
+          {
+            entry.kind === "ProblemSolution" && (
+              <>
+                <label class="field" for="problem">problem</label>
+                <textarea id="problem" name="problem">{get(entry, "problem")}</textarea>
+                <label class="field" for="environment">environment</label>
+                <textarea id="environment" name="environment">{get(entry, "environment")}</textarea>
+                <label class="field" for="symptoms">symptoms ◆ (one per line)</label>
+                <textarea id="symptoms" name="symptoms">{get(entry, "symptoms")}</textarea>
+                <label class="field" for="root_cause">root_cause ◆</label>
+                <textarea id="root_cause" name="root_cause">{get(entry, "root_cause")}</textarea>
+                <label class="field" for="solution">solution</label>
+                <textarea id="solution" name="solution">{get(entry, "solution")}</textarea>
+                <label class="field" for="verification">verification</label>
+                <textarea id="verification" name="verification">{get(entry, "verification")}</textarea>
+              </>
+            )
+          }
+          {
+            entry.kind === "Lesson" && (
+              <>
+                <label class="field" for="trap">trap ◆</label>
+                <textarea id="trap" name="trap">{get(entry, "trap")}</textarea>
+                <label class="field" for="correction">correction</label>
+                <textarea id="correction" name="correction">{get(entry, "correction")}</textarea>
+                <label class="field" for="why">why</label>
+                <textarea id="why" name="why">{get(entry, "why")}</textarea>
+                <label class="field" for="lesson_context">context</label>
+                <textarea id="lesson_context" name="lesson_context">{get(entry, "context")}</textarea>
+              </>
+            )
+          }
+          {
+            entry.kind === "Decision" && (
+              <>
+                <label class="field" for="dec_context">context ◆</label>
+                <textarea id="dec_context" name="dec_context">{get(entry, "context")}</textarea>
+                <label class="field" for="decision">decision ◆</label>
+                <textarea id="decision" name="decision">{get(entry, "decision")}</textarea>
+                <label class="field" for="rationale">rationale</label>
+                <textarea id="rationale" name="rationale">{get(entry, "rationale")}</textarea>
+                <label class="field" for="tradeoffs">tradeoffs</label>
+                <textarea id="tradeoffs" name="tradeoffs">{get(entry, "tradeoffs")}</textarea>
+              </>
+            )
+          }
+          {
+            entry.kind === "Heuristic" && (
+              <>
+                <label class="field" for="problem_class">problem_class ◆</label>
+                <textarea id="problem_class" name="problem_class">{get(entry, "problem_class")}</textarea>
+                <label class="field" for="pattern">pattern ◆</label>
+                <textarea id="pattern" name="pattern">{get(entry, "pattern")}</textarea>
+                <label class="field" for="limits">limits</label>
+                <textarea id="limits" name="limits">{get(entry, "limits")}</textarea>
+              </>
+            )
+          }
+        </fieldset>
+
+        <label class="field" for="body">body</label>
+        <textarea id="body" name="body" style="min-height: 160px;">{entry.body}</textarea>
+
+        <div class="actions">
+          <button type="submit" class="primary">Save</button>
+          <a href={`/entry/${entry.id}`} class="button">Cancel</a>
+        </div>
+      </form>
+    )
+  }
+</Base>
