@@ -1,0 +1,33 @@
+[Unit]
+Description=KB web UI (Hono on Bun)
+Documentation=https://github.com/XuanLee-HEALER/kb
+After=kb-server.service network-online.target
+Wants=kb-server.service
+PartOf=kb-server.service
+
+[Service]
+Type=simple
+User=kb
+Group=kb
+WorkingDirectory=/opt/kb/web
+EnvironmentFile=/etc/kb/env
+ExecStart=/usr/local/bin/bun src/server.tsx
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=10
+
+# Hardening
+ProtectSystem=strict
+ProtectHome=true
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+LockPersonality=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target

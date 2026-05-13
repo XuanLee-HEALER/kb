@@ -235,6 +235,12 @@ release-tag VERSION:
 release-watch:
     gh run watch $$(gh run list --workflow=release.yml --limit=1 --json databaseId --jq '.[0].databaseId')
 
+# Roll a release out to aliyun. Pulls the GitHub release artifact, scps, restarts.
+# Phase-0/1 manual provisioning must already be done — see deploy/README.md.
+#   just deploy v0.1.0
+deploy TAG:
+    bash scripts/deploy-aliyun.sh {{TAG}}
+
 # List recent GitHub Actions runs across all workflows.
 ci-status:
     gh run list --limit=10

@@ -1,0 +1,34 @@
+[Unit]
+Description=KB delta knowledge service (Rust + SQLite + libsimple)
+Documentation=https://github.com/XuanLee-HEALER/kb
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=kb
+Group=kb
+WorkingDirectory=/opt/kb
+EnvironmentFile=/etc/kb/env
+ExecStart=/opt/kb/bin/kb-server
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=15
+
+# Hardening
+ProtectSystem=strict
+ProtectHome=true
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=false  # rusqlite extension loading
+RestrictSUIDSGID=true
+ReadWritePaths=/var/lib/kb
+
+[Install]
+WantedBy=multi-user.target
