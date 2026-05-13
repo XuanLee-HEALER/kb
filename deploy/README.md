@@ -89,6 +89,7 @@ ssh aliyun
 useradd -r -s /usr/sbin/nologin -d /var/lib/kb -m kb
 mkdir -p /opt/kb /etc/kb /var/backups/kb /etc/nginx/ssl /etc/nginx/snippets
 chown kb:kb /var/lib/kb /var/backups/kb
+chown root:kb /etc/kb           # so kb user can traverse and read /etc/kb/env
 chmod 750 /etc/kb
 ```
 
