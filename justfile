@@ -226,7 +226,7 @@ deep-clean: clean
 # Cut a release tag and push it. CI will pick it up and build the artifact.
 #   just release-tag v0.2.0
 release-tag VERSION:
-    @test -z "$$(git status --porcelain)" || { echo "✗ working tree dirty"; exit 1; }
+    @git diff-index --quiet HEAD -- || { echo "✗ working tree dirty"; exit 1; }
     git tag -a "{{VERSION}}" -m "release {{VERSION}}"
     git push origin "{{VERSION}}"
     @echo "✓ tag {{VERSION}} pushed — release workflow will build the bundle"
