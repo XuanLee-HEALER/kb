@@ -9,11 +9,16 @@ mesh client  →  https://kb.lan  →  nginx (10.177.0.1:443, TLS termination)
                                     └─ /        →  kb-web      (127.0.0.1:5101)
 ```
 
+**TLS chain of trust** — root CA lives as `Secret cert-manager/etmesh-root-ca`
+in the archmbp k8s cluster; `ClusterIssuer etmesh-ca` signs leaf certs. The
+kb.lan leaf is requested via `deploy/k8s/kb-lan-cert.yaml` and copied out to
+aliyun nginx in Phase 1. Same pattern as all other .lan services in your mesh.
+
 The deploy is split into three phases:
 
 | Phase | Where | When | Mode |
 |---|---|---|---|
-| **0** Local prep | archmbp (you) | one-time + cert renewal | manual |
+| **0** Local prep | archmbp (k8s) | one-time + on cert rotation | manual |
 | **1** Remote provision | aliyun | one-time | manual |
 | **2** Rolling deploy | from local | each release | `scripts/deploy-aliyun.sh <tag>` |
 
@@ -25,36 +30,36 @@ idempotent — extract, symlink, restart.
 
 ## Phase 0 · Local prep (archmbp)
 
-Done once, plus whenever the leaf cert is up for renewal.
+Done once. The leaf cert auto-renews via cert-manager — re-export + scp only
+when the underlying secret rotates (cert-manager bumps it ~30d before expiry).
 
-### 0.1 Sign the `kb.lan` leaf cert with your etmesh root CA
+### 0.1 Issue the `kb.lan` leaf cert via cert-manager
 
-The root CA private key lives on archmbp (off-box, never on aliyun). Sign a
-leaf cert valid for `kb.lan` + `10.177.0.1` (so `curl --resolve`-style direct-
-IP access also works):
+The root CA lives as `Secret cert-manager/etmesh-root-ca`, fronted by
+`ClusterIssuer etmesh-ca` (already deployed in the k8s cluster on archmbp).
+cert-manager handles keygen, signing, and renewal. No openssl, no on-disk
+private key.
 
 ```sh
-# adjust paths to where your etmesh-root-ca lives on archmbp
-CA_DIR=~/path/to/etmesh-ca
-cd "$CA_DIR"
+# from archmbp
+kubectl apply -f deploy/k8s/kb-lan-cert.yaml
+# wait for cert-manager to provision (usually <5s)
+kubectl wait --for=condition=Ready --timeout=60s certificate/kb-lan-tls
+```
 
-# CSR (one-shot, no intermediate)
-openssl req -new -newkey rsa:4096 -nodes \
-    -keyout kb.lan.key -out kb.lan.csr \
-    -subj "/CN=kb.lan"
+Verify and extract the leaf to local files:
 
-# Sign for 825 days (max widely-accepted self-signed lifetime).
-openssl x509 -req -in kb.lan.csr \
-    -CA etmesh-root-ca.pem -CAkey etmesh-root-ca.key -CAcreateserial \
-    -days 825 -sha256 \
-    -extfile <(printf "subjectAltName=DNS:kb.lan,IP:10.177.0.1\nextendedKeyUsage=serverAuth") \
-    -out kb.lan.crt
+```sh
+kubectl get certificate kb-lan-tls -o jsonpath='{.status.conditions}' | jq .
+kubectl get secret kb-lan-tls -o jsonpath='{.data.tls\.crt}' | base64 -d > kb.lan.crt
+kubectl get secret kb-lan-tls -o jsonpath='{.data.tls\.key}' | base64 -d > kb.lan.key
+chmod 600 kb.lan.key
 
-# Verify
+# Sanity
 openssl x509 -in kb.lan.crt -noout -subject -issuer -dates -ext subjectAltName
 ```
 
-Keep `kb.lan.key` archmbp-only. You'll scp it to aliyun in Phase 1.
+You'll scp these in Phase 1.6.
 
 ### 0.2 Cut a release
 

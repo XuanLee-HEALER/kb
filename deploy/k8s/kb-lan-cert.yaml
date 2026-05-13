@@ -1,0 +1,41 @@
+# cert-manager Certificate · leaf for kb.lan (etmesh-internal)
+#
+# Issuer is the existing ClusterIssuer "etmesh-ca" backed by the
+# cert-manager/etmesh-root-ca Secret. cert-manager will:
+#   1. generate a fresh RSA-4096 keypair
+#   2. produce a CSR
+#   3. sign via the etmesh-ca ClusterIssuer
+#   4. write the result to Secret "kb-lan-tls" in this namespace
+#   5. renew automatically when within renewBefore of expiry
+#
+# Apply from archmbp:
+#   kubectl apply -f deploy/k8s/kb-lan-cert.yaml
+#
+# Then extract + ship to aliyun (see deploy/README.md Phase 0).
+
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: kb-lan-tls
+  namespace: default
+spec:
+  secretName: kb-lan-tls
+  duration: 8760h    # 1 year
+  renewBefore: 720h  # renew 30d before expiry
+  privateKey:
+    algorithm: RSA
+    size: 4096
+    rotationPolicy: Always
+  commonName: kb.lan
+  dnsNames:
+    - kb.lan
+  ipAddresses:
+    - 10.177.0.1
+  usages:
+    - server auth
+    - digital signature
+    - key encipherment
+  issuerRef:
+    name: etmesh-ca
+    kind: ClusterIssuer
+    group: cert-manager.io
