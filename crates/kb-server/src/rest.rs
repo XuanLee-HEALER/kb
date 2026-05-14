@@ -8,6 +8,7 @@
 //!   POST   /entries/:ulid/deprecate
 //!   GET    /search               kb.search (query string params)
 //!   POST   /search               kb.search (json body — supports kinds[], tag_prefixes[], etc.)
+//!   POST   /batch_search         kb.batch_search (json body — { queries: SearchQuery[] }, max 10)
 //!   GET    /recent
 //!   GET    /stats
 
@@ -21,7 +22,9 @@ use serde::{Deserialize, Serialize};
 use ulid::Ulid;
 
 use crate::error::{KbError, KbResult};
-use crate::store::{self, PartialEntry, PurgeSummary, SearchHit, SearchQuery, Stats};
+use crate::store::{
+    self, BatchSearchOutput, PartialEntry, PurgeSummary, SearchHit, SearchQuery, Stats,
+};
 use crate::AppState;
 
 pub fn router(state: AppState) -> Router {
@@ -33,6 +36,7 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/api/entries/{ulid}/deprecate", post(post_deprecate))
         .route("/api/search", get(get_search).post(post_search))
+        .route("/api/batch_search", post(post_batch_search))
         .route("/api/recent", get(get_recent))
         .route("/api/stats", get(get_stats))
         .with_state(state)
@@ -241,6 +245,34 @@ async fn post_search(
     .await
     .map_err(|e| KbError::Other(anyhow::anyhow!("join error: {e}")))??;
     Ok(Json(hits))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct BatchSearchBody {
+    pub queries: Vec<SearchQuery>,
+}
+
+async fn post_batch_search(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<BatchSearchBody>,
+) -> KbResult<Json<BatchSearchOutput>> {
+    check_auth(&state, &headers)?;
+    if body.queries.len() > crate::mcp::BATCH_SEARCH_MAX_QUERIES {
+        return Err(KbError::BadRequest(format!(
+            "too many queries; max {}, got {}",
+            crate::mcp::BATCH_SEARCH_MAX_QUERIES,
+            body.queries.len()
+        )));
+    }
+    let pool = state.pool.clone();
+    let out = tokio::task::spawn_blocking(move || {
+        let conn = pool.get()?;
+        store::batch_search(&conn, &body.queries)
+    })
+    .await
+    .map_err(|e| KbError::Other(anyhow::anyhow!("join error: {e}")))??;
+    Ok(Json(out))
 }
 
 #[derive(Debug, Deserialize)]

@@ -71,8 +71,15 @@ This file is for the higher-level question: should you write at all, and
 which kind. Once those are decided, the tool descriptions tell you how.
 
 A v3 `kb.semantic_search` (embedding-based recall) is in the design doc but
-not yet implemented; today the only retrieval paths are `kb.search` (struct
-+ FTS) and `kb.recent`.
+not yet implemented; today the retrieval paths are `kb.search` (struct +
+FTS, one query), `kb.batch_search` (up to 10 SearchQuery in one round-trip,
+server-side dedup by ULID with `matched_queries` attribution), and
+`kb.recent`.
+
+Rule of thumb: as soon as you'd otherwise send 2+ `search` calls back-to-back
+on the same intent (different phrasings, title-vs-NK angles, tag fallback),
+use `batch_search` instead. The combined result tells you which entries
+multiple angles agree on — a stronger signal than any single hit.
 
 ## Tag conventions
 

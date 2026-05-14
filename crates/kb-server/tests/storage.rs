@@ -437,3 +437,100 @@ fn purge_unknown_id_returns_not_found() {
     let err = store::purge(&mut conn, bogus, true).unwrap_err();
     assert!(matches!(err, kb_server::error::KbError::NotFound));
 }
+
+// =============================================================================
+// batch_search
+// =============================================================================
+
+#[test]
+fn batch_search_dedups_overlapping_hits() {
+    let (_t, pool) = fresh_db();
+    let mut conn = pool.get().unwrap();
+
+    let mut git_entry = fact("git stash drop drops untracked permanently");
+    git_entry.tags = vec!["git/stash".into()];
+    let WriteResult::Written { id: git_id, .. } = store::write(&mut conn, git_entry).unwrap()
+    else {
+        unreachable!()
+    };
+
+    // Unrelated entry — should NOT show in either query.
+    let _ = store::write(&mut conn, fact("an unrelated thing")).unwrap();
+
+    let queries = vec![
+        // Q0 — FTS hit on the git entry
+        SearchQuery {
+            kinds: vec![],
+            tag_prefixes: vec![],
+            query: Some("stash".into()),
+            limit: 20,
+            include_deprecated: false,
+        },
+        // Q1 — structured hit on the git entry by tag prefix
+        SearchQuery {
+            kinds: vec![],
+            tag_prefixes: vec!["git/".into()],
+            query: None,
+            limit: 20,
+            include_deprecated: false,
+        },
+    ];
+
+    let out = store::batch_search(&conn, &queries).unwrap();
+    assert!(out.errors.is_empty(), "no sub-query should fail");
+    assert_eq!(out.hits.len(), 1, "git entry must be deduped to one hit");
+    assert_eq!(out.hits[0].hit.id, git_id);
+    assert_eq!(out.hits[0].matched_queries, vec![0, 1]);
+    // Mixed FTS + structured → merged score must be None.
+    assert!(out.hits[0].hit.score.is_none());
+}
+
+#[test]
+fn batch_search_returns_unique_per_query() {
+    let (_t, pool) = fresh_db();
+    let mut conn = pool.get().unwrap();
+
+    let mut a = fact("alpha alpha alpha");
+    a.tags = vec!["x/a".into()];
+    let mut b = fact("beta beta beta");
+    b.tags = vec!["x/b".into()];
+    let mut c = fact("gamma gamma gamma");
+    c.tags = vec!["x/c".into()];
+    let WriteResult::Written { id: id_a, .. } = store::write(&mut conn, a).unwrap() else {
+        unreachable!()
+    };
+    let WriteResult::Written { id: id_b, .. } = store::write(&mut conn, b).unwrap() else {
+        unreachable!()
+    };
+    let WriteResult::Written { id: id_c, .. } = store::write(&mut conn, c).unwrap() else {
+        unreachable!()
+    };
+
+    let mk = |prefix: &str| SearchQuery {
+        kinds: vec![],
+        tag_prefixes: vec![prefix.into()],
+        query: None,
+        limit: 20,
+        include_deprecated: false,
+    };
+
+    let out = store::batch_search(&conn, &[mk("x/a"), mk("x/b"), mk("x/c")]).unwrap();
+    assert_eq!(out.hits.len(), 3);
+    assert!(out.errors.is_empty());
+    // Order: by first-matched-query asc (then score / updated_at; ties allowed)
+    assert_eq!(out.hits[0].hit.id, id_a);
+    assert_eq!(out.hits[0].matched_queries, vec![0]);
+    assert_eq!(out.hits[1].hit.id, id_b);
+    assert_eq!(out.hits[1].matched_queries, vec![1]);
+    assert_eq!(out.hits[2].hit.id, id_c);
+    assert_eq!(out.hits[2].matched_queries, vec![2]);
+}
+
+#[test]
+fn batch_search_empty_queries_returns_empty_output() {
+    let (_t, pool) = fresh_db();
+    let conn = pool.get().unwrap();
+    let out = store::batch_search(&conn, &[]).unwrap();
+    assert!(out.hits.is_empty());
+    assert!(out.errors.is_empty());
+}

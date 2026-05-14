@@ -26,7 +26,7 @@ use schemars::{json_schema, JsonSchema, Schema};
 use serde::{Deserialize, Serialize};
 use ulid::Ulid;
 
-use crate::store::{self, PartialEntry, SearchHit, SearchQuery, Stats};
+use crate::store::{self, BatchSearchOutput, PartialEntry, SearchHit, SearchQuery, Stats};
 use crate::AppState;
 
 pub fn router(state: AppState) -> Result<Router> {
@@ -219,6 +219,62 @@ pub struct RecentArgs {
     #[serde(default)]
     pub since: Option<chrono::DateTime<chrono::Utc>>,
 }
+
+/// Server-side cap on number of sub-queries per batch_search call. Exceeding
+/// it returns an error before any DB work.
+pub const BATCH_SEARCH_MAX_QUERIES: usize = 10;
+
+// `Vec<SearchArgs>` would derive a clean schema today, but to insulate against
+// future schemars/serde flatten interactions silently producing top-level
+// `oneOf` / `allOf` / `anyOf` (see the WriteArgs lesson), we hand-roll the
+// schema here as a flat object. tests/schema_dump.rs guards this.
+#[derive(Debug, Deserialize)]
+pub struct BatchSearchArgs {
+    pub queries: Vec<SearchArgs>,
+}
+
+impl JsonSchema for BatchSearchArgs {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "BatchSearchArgs".into()
+    }
+
+    fn json_schema(_generator: &mut schemars::SchemaGenerator) -> Schema {
+        json_schema!({
+            "type": "object",
+            "description": "Args for `batch_search`. Up to 10 independent SearchQuery in one round-trip; results are dedup'd by ULID with `matched_queries` attribution.",
+            "properties": {
+                "queries": {
+                    "type": "array",
+                    "maxItems": BATCH_SEARCH_MAX_QUERIES,
+                    "items": {
+                        "type": "object",
+                        "description": "Same shape as the single `search` tool's args. All fields optional; empty query means structured mode (filter + ORDER BY updated_at DESC).",
+                        "properties": {
+                            "kinds": {
+                                "type": "array",
+                                "items": {
+                                    "type": "string",
+                                    "enum": ["Fact", "ProblemSolution", "Lesson", "Decision", "Heuristic"]
+                                },
+                                "default": []
+                            },
+                            "tag_prefixes": {
+                                "type": "array",
+                                "items": { "type": "string" },
+                                "default": []
+                            },
+                            "query": { "type": ["string", "null"] },
+                            "limit": { "type": ["integer", "null"], "minimum": 1, "maximum": 200 },
+                            "include_deprecated": { "type": ["boolean", "null"] }
+                        }
+                    }
+                }
+            },
+            "required": ["queries"]
+        })
+    }
+}
+
 
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct UpdateOk {
@@ -482,6 +538,78 @@ simple_query escapes most input)."#)]
         .await
         .map_err(|e| format!("join: {e}"))??;
         Ok(Json(SearchOutput { hits }))
+    }
+
+    #[tool(description = r#"Fan out up to 10 independent SearchQuery in one round-trip; return a single dedup'd hit list.
+
+When to call (preferred over `search`):
+  - You are about to `write` and want a thorough pre-existence check — send
+    3–5 angles in one call (title tokens, NK tokens, the trap/claim, related
+    tags) instead of guessing one good query.
+  - You don't know which exact token KB indexed the entry under (same
+    concept, multiple phrasings).
+  - You're sweeping a topic from several angles and want to compare results
+    in one shot.
+
+When still to use single `search`:
+  - You already know the exact keywords / kind / tag combination.
+  - You only want the latest N of one filter shape (Mode A only).
+  - You're inside a tight loop where 1 sub-query is enough.
+
+Args:
+  - `queries` — array of SearchQuery objects (same shape as the `search`
+    tool's args: `kinds`, `tag_prefixes`, `query`, `limit`, `include_deprecated`).
+    Max 10. Mix structured (no `query`) and FTS (with `query`) freely.
+
+Returns `{ hits: BatchSearchHit[], errors: BatchSearchError[] }`:
+  - `hits[i]` has all SearchHit fields PLUS `matched_queries: u32[]` — the
+    0-based indices into your input `queries` that returned this entry.
+    `matched_queries.length > 1` is a strong recall signal (multiple angles
+    agree).
+  - `hits[i].score` (when present) is the BEST bm25 score across all
+    matching sub-queries (lower = better); if any matching sub-query was
+    structured-mode, score is null (bm25 across modes isn't meaningful).
+  - Order: hits sorted by `matched_queries[0]` asc (early query wins),
+    then score asc, then `updated_at` desc.
+  - `errors[]` is populated if a sub-query individually failed (rare; FTS
+    syntax issues mostly); other sub-queries still complete. Each entry is
+    `{ query_index, error }`.
+
+Errors:
+  - "too many queries; max 10" — `queries.length > 10` returns a hard error
+    before any DB work.
+
+Cost: 1 LLM round-trip vs N for `search` — favour batch when N >= 2 and
+the queries are independent angles on the same intent."#)]
+    async fn batch_search(
+        &self,
+        Parameters(args): Parameters<BatchSearchArgs>,
+    ) -> Result<Json<BatchSearchOutput>, String> {
+        if args.queries.len() > BATCH_SEARCH_MAX_QUERIES {
+            return Err(format!(
+                "too many queries; max {BATCH_SEARCH_MAX_QUERIES}, got {}",
+                args.queries.len()
+            ));
+        }
+        let queries: Vec<SearchQuery> = args
+            .queries
+            .into_iter()
+            .map(|a| SearchQuery {
+                kinds: a.kinds,
+                tag_prefixes: a.tag_prefixes,
+                query: a.query,
+                limit: a.limit.unwrap_or(20),
+                include_deprecated: a.include_deprecated.unwrap_or(false),
+            })
+            .collect();
+        let pool = self.state.pool.clone();
+        let out = tokio::task::spawn_blocking(move || {
+            let conn = pool.get().map_err(|e| format!("pool: {e}"))?;
+            store::batch_search(&conn, &queries).map_err(|e| e.to_string())
+        })
+        .await
+        .map_err(|e| format!("join: {e}"))??;
+        Ok(Json(out))
     }
 
     #[tool(description = r#"Most recently updated entries, no query / no filtering.

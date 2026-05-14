@@ -5,7 +5,7 @@
 //!
 //! [`Conn`]: crate::db::Conn
 
-use std::collections::{HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use chrono::{DateTime, Utc};
 use kb_core::{
@@ -52,6 +52,29 @@ pub struct SearchHit {
     pub updated_at: DateTime<Utc>,
     pub deprecated_at: Option<DateTime<Utc>>,
     pub score: Option<f64>,
+}
+
+// batch_search result types. See `batch_search()` for semantics.
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct BatchSearchHit {
+    #[serde(flatten)]
+    pub hit: SearchHit,
+    /// 0-based indices into the input `queries` array that returned this entry.
+    /// `len() > 1` means multiple sub-queries hit the same entry — strong signal.
+    pub matched_queries: Vec<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct BatchSearchError {
+    pub query_index: u32,
+    pub error: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct BatchSearchOutput {
+    pub hits: Vec<BatchSearchHit>,
+    pub errors: Vec<BatchSearchError>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
@@ -653,6 +676,86 @@ fn search_fts(conn: &Conn, q: &SearchQuery, text: &str, limit: u32) -> KbResult<
         out.push(r?);
     }
     Ok(out)
+}
+
+// =============================================================================
+// batch_search — fan out N independent SearchQuery, dedup by ULID across all
+// =============================================================================
+
+/// Fan out N independent search queries; collect into a single dedup'd hit list.
+///
+/// - Each sub-query goes through the same `search()` (struct or FTS mode);
+/// - The same ULID returned by multiple sub-queries appears once, with
+///   `matched_queries` listing the indices that hit it;
+/// - A failing sub-query is isolated into `errors` and does not abort the batch;
+/// - Result order: by `matched_queries[0]` asc (early query wins),
+///   then bm25 score asc (FTS only — None drops to the back),
+///   then `updated_at` desc.
+///
+/// Caps (max query count, etc.) are enforced at the API layer, not here.
+pub fn batch_search(conn: &Conn, queries: &[SearchQuery]) -> KbResult<BatchSearchOutput> {
+    let mut by_id: HashMap<Ulid, BatchSearchHit> = HashMap::new();
+    let mut order: Vec<Ulid> = Vec::new(); // first-seen ULID order
+    let mut errors: Vec<BatchSearchError> = Vec::new();
+
+    for (idx, q) in queries.iter().enumerate() {
+        let qi = idx as u32;
+        match search(conn, q) {
+            Ok(hits) => {
+                for h in hits {
+                    if let Some(agg) = by_id.get_mut(&h.id) {
+                        agg.matched_queries.push(qi);
+                        // bm25 scores from different sub-queries aren't
+                        // rigorously comparable, but for the common case
+                        // (both FTS hits) "lower is better" is the right
+                        // sentiment. If any matching sub-query was
+                        // structured (None score), keep None — there's no
+                        // meaningful merged score.
+                        agg.hit.score = match (agg.hit.score, h.score) {
+                            (Some(a), Some(b)) => Some(a.min(b)),
+                            _ => None,
+                        };
+                    } else {
+                        order.push(h.id);
+                        by_id.insert(
+                            h.id,
+                            BatchSearchHit {
+                                hit: h,
+                                matched_queries: vec![qi],
+                            },
+                        );
+                    }
+                }
+            }
+            Err(e) => errors.push(BatchSearchError {
+                query_index: qi,
+                error: e.to_string(),
+            }),
+        }
+    }
+
+    let mut hits: Vec<BatchSearchHit> = order
+        .into_iter()
+        .filter_map(|id| by_id.remove(&id))
+        .collect();
+    hits.sort_by(|a, b| {
+        a.matched_queries[0]
+            .cmp(&b.matched_queries[0])
+            .then_with(|| score_cmp(&a.hit.score, &b.hit.score))
+            .then_with(|| b.hit.updated_at.cmp(&a.hit.updated_at))
+    });
+
+    Ok(BatchSearchOutput { hits, errors })
+}
+
+/// Order Option<f64> bm25 scores: lower is better; None drops to the back.
+fn score_cmp(a: &Option<f64>, b: &Option<f64>) -> std::cmp::Ordering {
+    match (a, b) {
+        (Some(x), Some(y)) => x.partial_cmp(y).unwrap_or(std::cmp::Ordering::Equal),
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (None, None) => std::cmp::Ordering::Equal,
+    }
 }
 
 // =============================================================================
