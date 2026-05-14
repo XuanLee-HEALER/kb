@@ -204,6 +204,22 @@ skill-preview: build-skill
     @echo "Skill bundle at: $(pwd)/skill/kb-skill.tar.gz"
     @ls -lh skill/kb-skill.tar.gz
 
+# Re-runs are safe: an existing mcp.json (URL + bearer token) is preserved.
+# Install the freshly-built skill into ~/.claude/skills/kb-skill/.
+install-skill-local: build-skill
+    #!/usr/bin/env bash
+    set -euo pipefail
+    dest="$HOME/.claude/skills/kb-skill"
+    mkdir -p "$dest"
+    tar xzf skill/kb-skill.tar.gz -C "$dest" --exclude=mcp.json
+    if [ ! -f "$dest/mcp.json" ]; then
+        tar xzf skill/kb-skill.tar.gz -C "$dest" mcp.json
+        echo "→ first install: edit $dest/mcp.json (URL + bearer token)"
+    else
+        echo "→ kept existing $dest/mcp.json"
+    fi
+    echo "✓ installed to $dest (VERSION $(cat "$dest/VERSION"))"
+
 # ─── clean ──────────────────────────────────────────────────────────────────
 
 # Remove all build artifacts (target, web bundle, release/, skill tarball).

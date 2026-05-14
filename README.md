@@ -51,6 +51,20 @@ x86_64-linux 制品由 CI 在打 tag 时产出。本地复现:`just build-releas
 
 设计文档第 8 节给了 nginx 反代 + Aliyun ECS 拓扑。
 
+## Claude Code skill 安装
+
+```sh
+curl -fsSL https://kb.your-domain.com/skill/download | tar xz -C ~/.claude/skills/
+$EDITOR ~/.claude/skills/kb-skill/mcp.json   # 填 URL + bearer token
+```
+
+升级检测(对比远端和本地 VERSION,不同则重跑上面的 install):
+
+```sh
+diff <(curl -s https://kb.your-domain.com/skill/version) \
+     ~/.claude/skills/kb-skill/VERSION
+```
+
 ## 测试
 
 ```sh

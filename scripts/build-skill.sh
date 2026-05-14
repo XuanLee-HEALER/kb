@@ -11,7 +11,7 @@ if git -C "$repo_root" rev-parse --short HEAD >/dev/null 2>&1; then
 fi
 
 tar --exclude='kb-skill.tar.gz' -czf kb-skill.tar.gz \
-    SKILL.md mcp.json README.md VERSION examples/
+    SKILL.md mcp.json VERSION examples/
 
 echo "built skill/kb-skill.tar.gz $(wc -c < kb-skill.tar.gz | tr -d ' ') bytes"
 echo "VERSION = $(cat VERSION)"
