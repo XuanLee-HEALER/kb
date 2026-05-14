@@ -135,8 +135,8 @@ else
 fi
 
 echo "▶ verify via mesh"
-ssh "$HOST" "curl -sSk --connect-timeout 5 -o /dev/null -w 'GET https://kb.lan/api/stats → %{http_code}\\n' \
-    --resolve kb.lan:443:10.177.0.1 -H \"Authorization: Bearer \$(grep ^KB_TOKEN= /etc/kb/env | cut -d= -f2)\" \
-    https://kb.lan/api/stats || true"
+ssh "$HOST" "curl -sSk --connect-timeout 5 -o /dev/null -w 'GET https://kb.lan/skill/version → %{http_code}\\n' \
+    --resolve kb.lan:443:10.177.0.1 \
+    https://kb.lan/skill/version || true"
 
 echo "✓ deployed $TAG → $HOST${ONLY:+  (--only=$ONLY)}"
