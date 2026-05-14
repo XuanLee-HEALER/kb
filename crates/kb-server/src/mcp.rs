@@ -22,7 +22,7 @@ use rmcp::transport::streamable_http_server::session::local::LocalSessionManager
 use rmcp::transport::streamable_http_server::{StreamableHttpServerConfig, StreamableHttpService};
 #[allow(unused_imports)]
 use rmcp::{tool, tool_handler, tool_router, Json, ServerHandler};
-use schemars::JsonSchema;
+use schemars::{json_schema, JsonSchema, Schema};
 use serde::{Deserialize, Serialize};
 use ulid::Ulid;
 
@@ -55,10 +55,128 @@ struct KbHandler {
 // Tool request/response wrappers (rmcp requires JsonSchema).
 // =============================================================================
 
-#[derive(Debug, Deserialize, JsonSchema)]
+// `kb_core::WriteInput` flattens an internally-tagged `KindData` enum, which
+// schemars renders as a top-level `oneOf`. Anthropic's tool API rejects any
+// `input_schema` whose root contains `oneOf` / `allOf` / `anyOf`
+// (claude-code error: "input_schema does not support oneOf, allOf, or anyOf
+// at the top level"). We keep the serde wire format unchanged but emit a
+// flat object schema here; per-kind required fields are documented in the
+// `write` tool description and still enforced server-side by serde during
+// deserialization.
+#[derive(Debug, Deserialize)]
 pub struct WriteArgs {
     #[serde(flatten)]
     pub inner: kb_core::WriteInput,
+}
+
+impl JsonSchema for WriteArgs {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "WriteArgs".into()
+    }
+
+    fn json_schema(_generator: &mut schemars::SchemaGenerator) -> Schema {
+        json_schema!({
+            "type": "object",
+            "description": "Args for the `write` tool. Field requirements vary by `kind` (validated server-side); see the tool description for per-kind required fields.",
+            "properties": {
+                "title": { "type": "string" },
+                "body": { "type": "string", "default": "" },
+                "tags": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "default": []
+                },
+                "source": {
+                    "type": "object",
+                    "description": "Internally tagged by `type`. Variants: {type:'Human'} | {type:'ClaudeCode', session_id, project, cwd} | {type:'Imported', from, original_date}.",
+                    "properties": {
+                        "type": {
+                            "type": "string",
+                            "enum": ["Human", "ClaudeCode", "Imported"]
+                        },
+                        "session_id": { "type": "string" },
+                        "project": { "type": "string" },
+                        "cwd": { "type": "string" },
+                        "from": { "type": "string" },
+                        "original_date": { "type": "string", "format": "date-time" }
+                    },
+                    "required": ["type"]
+                },
+                "kind": {
+                    "type": "string",
+                    "enum": ["Fact", "ProblemSolution", "Lesson", "Decision", "Heuristic"],
+                    "description": "Discriminator for the kind-specific data fields below."
+                },
+                "claim": { "type": "string", "description": "Fact: required." },
+                "evidence": {
+                    "type": "array",
+                    "description": "Fact: required. Each item: {kind: 'Output'|'Url'|'SelfVerification', content: string, captured_at: RFC3339}.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "kind": {
+                                "type": "string",
+                                "enum": ["Output", "Url", "SelfVerification"]
+                            },
+                            "content": { "type": "string" },
+                            "captured_at": { "type": "string", "format": "date-time" }
+                        },
+                        "required": ["kind", "content", "captured_at"]
+                    }
+                },
+                "problem": { "type": "string", "description": "ProblemSolution: required." },
+                "environment": { "type": "string", "description": "ProblemSolution: required." },
+                "symptoms": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "ProblemSolution: required."
+                },
+                "root_cause": { "type": "string", "description": "ProblemSolution: required." },
+                "solution": { "type": "string", "description": "ProblemSolution: required." },
+                "verification": { "type": "string", "description": "ProblemSolution: optional." },
+                "trap": { "type": "string", "description": "Lesson: required." },
+                "correction": { "type": "string", "description": "Lesson: required." },
+                "why": { "type": "string", "description": "Lesson: required." },
+                "context": { "type": "string", "description": "Lesson: optional. Decision: required." },
+                "decision": { "type": "string", "description": "Decision: required." },
+                "rationale": { "type": "string", "description": "Decision: required." },
+                "alternatives": {
+                    "type": "array",
+                    "description": "Decision: optional. Each item: {option: string, why_not: string}.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "option": { "type": "string" },
+                            "why_not": { "type": "string" }
+                        },
+                        "required": ["option", "why_not"]
+                    }
+                },
+                "tradeoffs": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "Decision: optional."
+                },
+                "problem_class": { "type": "string", "description": "Heuristic: required." },
+                "pattern": { "type": "string", "description": "Heuristic: required." },
+                "limits": { "type": "string", "description": "Heuristic: optional." },
+                "supersedes": {
+                    "type": ["string", "null"],
+                    "description": "ULID of an existing entry. If set, that entry is atomically deprecated when this one is written."
+                },
+                "dedup": {
+                    "type": "string",
+                    "enum": ["check", "force"],
+                    "default": "check"
+                },
+                "proceed_token": {
+                    "type": ["string", "null"],
+                    "description": "Required when dedup='force'; must match the token from a prior duplicates_found response."
+                }
+            },
+            "required": ["title", "source", "kind"]
+        })
+    }
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
