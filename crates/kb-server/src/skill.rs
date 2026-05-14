@@ -165,22 +165,35 @@ or project scope (./.claude — only this repo)?\"
 Set $TARGET to ~/.claude (user scope) or ./.claude (project scope) based on \
 their answer. Do not pick a default; wait for the user to choose.
 
-STEP 1: Download and unpack the skill bundle.
+STEP 1: Download and unpack the skill bundle (SKILL.md + examples — these are \
+what Claude Code auto-loads when triggered).
   mkdir -p $TARGET/skills
   curl -fsSL {url} | tar -xz -C $TARGET/skills/
 
-This creates $TARGET/skills/kb-skill/ containing SKILL.md, mcp.json, examples/, \
-VERSION. The mcp.json in the tarball has placeholder URL/token values.
+This creates $TARGET/skills/kb-skill/. The mcp.json inside the tarball is a \
+placeholder for reference only — Claude Code does not register MCP servers \
+from skill directories, so leave it alone.
 
-STEP 2: Overwrite $TARGET/skills/kb-skill/mcp.json with the `mcp_config` field \
-from this response (it already contains the real URL and bearer token). Write \
-it with two-space indentation, no trailing whitespace.
+STEP 2 (this is what actually wires up the MCP server): Merge the \
+`mcp_config` field from this response into $TARGET/settings.local.json.
+  - settings.local.json is .gitignore'd by Claude Code convention, so it is \
+safe to put the bearer token here.
+  - If $TARGET/settings.local.json already exists, parse it as JSON, merge \
+mcp_config.mcpServers.kb into its mcpServers object (preserving any other \
+servers), and write it back with two-space indentation.
+  - If it doesn't exist, create it with the full mcp_config from this response \
+as the file body (it already has the right shape: {{ \"mcpServers\": {{ \"kb\": \
+{{...}} }} }}).
+  - DO NOT write to $TARGET/settings.json. That file is typically committed to \
+git and would leak the bearer token.
 
-STEP 3: Tell the user installation is complete and to restart Claude Code so \
-the new MCP server is registered. Mention the scope they chose.
+STEP 3: Tell the user installation is complete, mention which scope they chose \
+and that the MCP server is registered in $TARGET/settings.local.json, and ask \
+them to restart Claude Code so the new MCP server is picked up.
 
-Do not run other commands. Do not edit anything outside $TARGET/skills/kb-skill/. \
-Do not echo the bearer token to the user — just write it into mcp.json.",
+Do not run other commands. Do not edit anything outside \
+$TARGET/skills/kb-skill/ and $TARGET/settings.local.json. Do not echo the \
+bearer token to the user — just write it into settings.local.json.",
         url = skill_download_url
     )
 }
