@@ -84,7 +84,7 @@ else
         server)
             ssh "$HOST" "set -euo pipefail
               cd /opt/kb
-              tar -xzf '/tmp/$ART' --no-same-owner bin/ libsimple/
+              tar -xzf '/tmp/$ART' --no-same-owner ./bin/ ./libsimple/
               chown -R kb:kb /opt/kb/bin /opt/kb/libsimple
               systemctl restart kb-server
               systemctl is-active --quiet kb-server && echo '  ✓ kb-server active'
@@ -94,7 +94,7 @@ else
         web)
             ssh "$HOST" "set -euo pipefail
               cd /opt/kb
-              tar -xzf '/tmp/$ART' --no-same-owner web/
+              tar -xzf '/tmp/$ART' --no-same-owner ./web/
               chown -R kb:kb /opt/kb/web
               systemctl restart kb-web
               systemctl is-active --quiet kb-web && echo '  ✓ kb-web active'
@@ -103,7 +103,7 @@ else
         skill)
             ssh "$HOST" "set -euo pipefail
               cd /opt/kb
-              tar -xzf '/tmp/$ART' --no-same-owner skill/
+              tar -xzf '/tmp/$ART' --no-same-owner ./skill/
               chown -R kb:kb /opt/kb/skill
               echo '  ✓ skill files refreshed (no restart — kb-server reads /opt/kb/skill at request time)'
             "
@@ -111,7 +111,7 @@ else
         configs)
             ssh "$HOST" "set -euo pipefail
               cd /opt/kb
-              tar -xzf '/tmp/$ART' --no-same-owner deploy/
+              tar -xzf '/tmp/$ART' --no-same-owner ./deploy/
               chown -R kb:kb /opt/kb/deploy
               ln -sf /opt/kb/deploy/kb-server.service /etc/systemd/system/kb-server.service
               ln -sf /opt/kb/deploy/kb-web.service    /etc/systemd/system/kb-web.service
