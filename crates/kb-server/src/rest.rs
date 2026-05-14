@@ -4,6 +4,7 @@
 //!   POST   /entries              kb.write
 //!   GET    /entries/:ulid        kb.get
 //!   PATCH  /entries/:ulid        kb.update
+//!   DELETE /entries/:ulid        kb.purge (admin — not exposed via MCP)
 //!   POST   /entries/:ulid/deprecate
 //!   GET    /search               kb.search (query string params)
 //!   POST   /search               kb.search (json body — supports kinds[], tag_prefixes[], etc.)
@@ -20,13 +21,16 @@ use serde::{Deserialize, Serialize};
 use ulid::Ulid;
 
 use crate::error::{KbError, KbResult};
-use crate::store::{self, PartialEntry, SearchHit, SearchQuery, Stats};
+use crate::store::{self, PartialEntry, PurgeSummary, SearchHit, SearchQuery, Stats};
 use crate::AppState;
 
 pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/api/entries", post(post_entry))
-        .route("/api/entries/{ulid}", get(get_entry).patch(patch_entry))
+        .route(
+            "/api/entries/{ulid}",
+            get(get_entry).patch(patch_entry).delete(delete_entry),
+        )
         .route("/api/entries/{ulid}/deprecate", post(post_deprecate))
         .route("/api/search", get(get_search).post(post_search))
         .route("/api/recent", get(get_recent))
@@ -136,6 +140,33 @@ async fn post_deprecate(
     .await
     .map_err(|e| KbError::Other(anyhow::anyhow!("join error: {e}")))??;
     Ok(StatusCode::NO_CONTENT)
+}
+
+// purge
+
+#[derive(Debug, Deserialize, Default)]
+pub struct PurgeParams {
+    #[serde(default)]
+    pub dry_run: Option<bool>,
+}
+
+async fn delete_entry(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(ulid): Path<String>,
+    Query(p): Query<PurgeParams>,
+) -> KbResult<Json<PurgeSummary>> {
+    check_auth(&state, &headers)?;
+    let id: Ulid = ulid.parse()?;
+    let dry_run = p.dry_run.unwrap_or(false);
+    let pool = state.pool.clone();
+    let summary = tokio::task::spawn_blocking(move || {
+        let mut conn = pool.get()?;
+        store::purge(&mut conn, id, dry_run)
+    })
+    .await
+    .map_err(|e| KbError::Other(anyhow::anyhow!("join error: {e}")))??;
+    Ok(Json(summary))
 }
 
 // search

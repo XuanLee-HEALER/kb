@@ -61,6 +61,15 @@ enum Cmd {
     },
     /// Deprecate an entry (no successor).
     Deprecate { id: String, reason: String },
+    /// Physically delete an entry. Cascades over the supersede chain and
+    /// rewrites [[ulid]] body refs in surviving entries to `[[ulid → deleted]]`.
+    /// Defaults to dry-run; pass --yes to actually apply.
+    Purge {
+        id: String,
+        /// Actually perform the deletion. Without this, the call is a preview.
+        #[arg(long)]
+        yes: bool,
+    },
 }
 
 #[derive(Debug, serde::Deserialize, Default)]
@@ -233,8 +242,61 @@ async fn main() -> Result<()> {
                 .await?;
             println!("ok");
         }
+        Cmd::Purge { id, yes } => {
+            let path = if yes {
+                format!("/api/entries/{id}")
+            } else {
+                format!("/api/entries/{id}?dry_run=true")
+            };
+            let v = client
+                .json_value(reqwest::Method::DELETE, &path, None)
+                .await?;
+            print_purge(&v, yes);
+        }
     }
     Ok(())
+}
+
+fn print_purge(v: &Value, applied: bool) {
+    let dry = v
+        .get("dry_run")
+        .and_then(Value::as_bool)
+        .unwrap_or(!applied);
+    let purged = v.get("purged").and_then(Value::as_array);
+    let rewritten = v.get("rewritten").and_then(Value::as_array);
+
+    let header = if dry { "Would purge" } else { "Purged" };
+    if let Some(arr) = purged {
+        if arr.is_empty() {
+            println!("(nothing to purge)");
+            return;
+        }
+        println!("{header} {} entries:", arr.len());
+        for e in arr {
+            let id = e.get("id").and_then(Value::as_str).unwrap_or("?");
+            let kind = e.get("kind").and_then(Value::as_str).unwrap_or("?");
+            let title = e.get("title").and_then(Value::as_str).unwrap_or("");
+            println!("  [{kind:16}] {id}  {title}");
+        }
+    }
+
+    let action = if dry { "Would rewrite" } else { "Rewrote" };
+    if let Some(arr) = rewritten {
+        if !arr.is_empty() {
+            println!("{action} body in {} other entries:", arr.len());
+            for e in arr {
+                let id = e.get("id").and_then(Value::as_str).unwrap_or("?");
+                let n = e.get("refs_count").and_then(Value::as_u64).unwrap_or(0);
+                let plural = if n == 1 { "" } else { "s" };
+                println!("  {id}  ({n} reference{plural})");
+            }
+        }
+    }
+
+    if dry {
+        println!();
+        println!("Re-run with --yes to apply.");
+    }
 }
 
 fn print_hits(v: &Value) {

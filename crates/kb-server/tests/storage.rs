@@ -313,3 +313,127 @@ fn search_excludes_deprecated_by_default() {
     let hits2 = store::search(&conn, &q2).unwrap();
     assert_eq!(hits2.len(), 1);
 }
+
+#[test]
+fn purge_dry_run_returns_plan_without_mutating() {
+    let (_t, pool) = fresh_db();
+    let mut conn = pool.get().unwrap();
+    let WriteResult::Written { id, .. } = store::write(&mut conn, fact("ephemeral")).unwrap()
+    else {
+        unreachable!()
+    };
+
+    let plan = store::purge(&mut conn, id, true).unwrap();
+    assert!(plan.dry_run);
+    assert_eq!(plan.purged.len(), 1);
+    assert_eq!(plan.purged[0].id, id);
+    assert!(plan.rewritten.is_empty());
+
+    // Still there after dry-run.
+    assert!(store::get_by_ulid(&conn, id).unwrap().is_some());
+}
+
+#[test]
+fn purge_actually_deletes_and_clears_fts() {
+    let (_t, pool) = fresh_db();
+    let mut conn = pool.get().unwrap();
+    let WriteResult::Written { id, .. } =
+        store::write(&mut conn, fact("doomed entry alpha-token")).unwrap()
+    else {
+        unreachable!()
+    };
+
+    let summary = store::purge(&mut conn, id, false).unwrap();
+    assert!(!summary.dry_run);
+    assert_eq!(summary.purged.len(), 1);
+
+    assert!(store::get_by_ulid(&conn, id).unwrap().is_none());
+
+    // FTS row gone too — searching the unique token returns nothing.
+    let q = SearchQuery {
+        kinds: vec![],
+        tag_prefixes: vec![],
+        query: Some("alpha-token".into()),
+        limit: 10,
+        include_deprecated: true,
+    };
+    let hits = store::search(&conn, &q).unwrap();
+    assert!(hits.is_empty());
+}
+
+#[test]
+fn purge_cascades_over_supersede_chain() {
+    let (_t, pool) = fresh_db();
+    let mut conn = pool.get().unwrap();
+
+    // Chain: v1 ← v2 ← v3 (v3 supersedes v2, v2 supersedes v1).
+    let WriteResult::Written { id: v1, .. } = store::write(&mut conn, fact("chain v1")).unwrap()
+    else {
+        unreachable!()
+    };
+    let mut v2_in = fact("chain v2");
+    v2_in.supersedes = Some(v1);
+    let WriteResult::Written { id: v2, .. } = store::write(&mut conn, v2_in).unwrap() else {
+        unreachable!()
+    };
+    let mut v3_in = fact("chain v3");
+    v3_in.supersedes = Some(v2);
+    let WriteResult::Written { id: v3, .. } = store::write(&mut conn, v3_in).unwrap() else {
+        unreachable!()
+    };
+
+    // Purging v3 (the head) should cascade backwards through superseded_by.
+    let summary = store::purge(&mut conn, v3, false).unwrap();
+    let purged_ids: std::collections::HashSet<_> = summary.purged.iter().map(|p| p.id).collect();
+    assert!(purged_ids.contains(&v1));
+    assert!(purged_ids.contains(&v2));
+    assert!(purged_ids.contains(&v3));
+    assert_eq!(purged_ids.len(), 3);
+
+    assert!(store::get_by_ulid(&conn, v1).unwrap().is_none());
+    assert!(store::get_by_ulid(&conn, v2).unwrap().is_none());
+    assert!(store::get_by_ulid(&conn, v3).unwrap().is_none());
+}
+
+#[test]
+fn purge_rewrites_body_references_in_survivors() {
+    let (_t, pool) = fresh_db();
+    let mut conn = pool.get().unwrap();
+
+    let WriteResult::Written { id: target, .. } =
+        store::write(&mut conn, fact("the target")).unwrap()
+    else {
+        unreachable!()
+    };
+
+    // A survivor whose body mentions [[target]] twice.
+    let mut survivor_in = fact("survivor");
+    survivor_in.body = format!("see [[{target}]] for context; also [[{target}]] again");
+    let WriteResult::Written {
+        id: survivor,
+        version: v0,
+    } = store::write(&mut conn, survivor_in).unwrap()
+    else {
+        unreachable!()
+    };
+    assert_eq!(v0, 1);
+
+    let summary = store::purge(&mut conn, target, false).unwrap();
+    assert_eq!(summary.rewritten.len(), 1);
+    assert_eq!(summary.rewritten[0].id, survivor);
+    assert_eq!(summary.rewritten[0].refs_count, 2);
+
+    let after = store::get_by_ulid(&conn, survivor).unwrap().unwrap();
+    assert!(after.body.contains("→ deleted"));
+    assert!(!after.body.contains(&format!("[[{target}]]")));
+    assert_eq!(after.version, 2);
+}
+
+#[test]
+fn purge_unknown_id_returns_not_found() {
+    let (_t, pool) = fresh_db();
+    let mut conn = pool.get().unwrap();
+    let bogus = ulid::Ulid::new();
+    let err = store::purge(&mut conn, bogus, true).unwrap_err();
+    assert!(matches!(err, kb_server::error::KbError::NotFound));
+}

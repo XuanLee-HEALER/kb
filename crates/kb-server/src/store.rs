@@ -5,6 +5,8 @@
 //!
 //! [`Conn`]: crate::db::Conn
 
+use std::collections::{HashSet, VecDeque};
+
 use chrono::{DateTime, Utc};
 use kb_core::{
     natural_key, Entry, EntryKind, KindData, NaturalKey, Source, WriteInput, WriteResult,
@@ -348,6 +350,187 @@ fn deprecate_in_tx(
         return Err(KbError::Conflict("already deprecated".into()));
     }
     Ok(())
+}
+
+// =============================================================================
+// purge — physical delete, cascades over supersede chain, rewrites [[ulid]] refs
+// =============================================================================
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct PurgeSummary {
+    pub dry_run: bool,
+    pub purged: Vec<PurgedEntry>,
+    pub rewritten: Vec<RewrittenEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct PurgedEntry {
+    #[schemars(with = "String")]
+    pub id: Ulid,
+    pub kind: EntryKind,
+    pub title: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct RewrittenEntry {
+    #[schemars(with = "String")]
+    pub id: Ulid,
+    pub refs_count: u32,
+}
+
+pub fn purge(conn: &mut Conn, id: Ulid, dry_run: bool) -> KbResult<PurgeSummary> {
+    let tx = conn.transaction()?;
+
+    // 1. BFS over the supersede chain: collect `id` and every entry whose
+    //    `superseded_by` (transitively) equals one of the entries we're about
+    //    to delete. The first lookup must succeed; later ones can dangle and
+    //    are skipped (a deprecated entry can reference a missing successor
+    //    if the chain was edited out-of-band).
+    let mut to_purge: Vec<(i64, Ulid, EntryKind, String)> = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut queue: VecDeque<Ulid> = VecDeque::new();
+    queue.push_back(id);
+
+    while let Some(cur) = queue.pop_front() {
+        if !seen.insert(cur.to_string()) {
+            continue;
+        }
+        let row: Option<(i64, String, String)> = tx
+            .query_row(
+                "SELECT rowid, kind, title FROM entries WHERE ulid = ?1",
+                params![cur.to_string()],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .optional()?;
+        let Some((rowid, kind_str, title)) = row else {
+            if to_purge.is_empty() {
+                return Err(KbError::NotFound);
+            }
+            continue;
+        };
+        let kind = parse_kind(&kind_str)
+            .map_err(|e| KbError::BadRequest(format!("corrupt kind in row {rowid}: {e}")))?;
+        to_purge.push((rowid, cur, kind, title));
+
+        let mut stmt = tx.prepare("SELECT ulid FROM entries WHERE superseded_by = ?1")?;
+        let kids = stmt.query_map(params![cur.to_string()], |r| r.get::<_, String>(0))?;
+        for k in kids {
+            let k_str = k?;
+            let k_ulid = Ulid::from_string(&k_str).map_err(|e| {
+                KbError::BadRequest(format!("corrupt superseded_by ulid {k_str}: {e}"))
+            })?;
+            queue.push_back(k_ulid);
+        }
+    }
+
+    // 2. Find every surviving entry whose body contains `[[<ulid>]]` for any
+    //    of the to-be-purged ids, and compute the rewritten body
+    //    (`[[<ulid> → deleted]]`). Count occurrences for the summary.
+    let purge_ids: Vec<String> = to_purge.iter().map(|(_, u, _, _)| u.to_string()).collect();
+    let purge_set: HashSet<&str> = purge_ids.iter().map(String::as_str).collect();
+
+    let mut rewritten: Vec<RewrittenEntry> = Vec::new();
+    let mut body_updates: Vec<(i64, String)> = Vec::new();
+
+    {
+        let mut stmt = tx.prepare("SELECT rowid, ulid, body FROM entries")?;
+        let rows = stmt.query_map([], |r| {
+            Ok((
+                r.get::<_, i64>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+            ))
+        })?;
+        for row in rows {
+            let (rowid, ulid_s, body) = row?;
+            if purge_set.contains(ulid_s.as_str()) {
+                continue;
+            }
+            let mut new_body = body.clone();
+            let mut count = 0u32;
+            for pid in &purge_ids {
+                let needle = format!("[[{pid}]]");
+                let n = new_body.matches(&needle).count() as u32;
+                if n > 0 {
+                    count += n;
+                    let replacement = format!("[[{pid} → deleted]]");
+                    new_body = new_body.replace(&needle, &replacement);
+                }
+            }
+            if count > 0 {
+                let ulid_typed = Ulid::from_string(&ulid_s).map_err(|e| {
+                    KbError::BadRequest(format!("corrupt ulid {ulid_s}: {e}"))
+                })?;
+                rewritten.push(RewrittenEntry {
+                    id: ulid_typed,
+                    refs_count: count,
+                });
+                body_updates.push((rowid, new_body));
+            }
+        }
+    }
+
+    let summary = PurgeSummary {
+        dry_run,
+        purged: to_purge
+            .iter()
+            .map(|(_, u, k, t)| PurgedEntry {
+                id: *u,
+                kind: *k,
+                title: t.clone(),
+            })
+            .collect(),
+        rewritten: rewritten.clone(),
+    };
+
+    if dry_run {
+        // Transaction rolls back on drop — explicit for clarity.
+        drop(tx);
+        return Ok(summary);
+    }
+
+    // 3. Apply body rewrites: bump version, refresh FTS, append history.
+    let now = Utc::now();
+    for (rowid, new_body) in &body_updates {
+        let prev = tx.query_row(
+            "SELECT rowid, ulid, kind, title, body, tags, source, type_data,
+                    natural_key_text, natural_key_hash, created_at, updated_at, version,
+                    deprecated_at, deprecation_reason, superseded_by
+               FROM entries WHERE rowid = ?1",
+            params![rowid],
+            row_to_entry,
+        )?;
+        let new_version = prev.version + 1;
+        tx.execute(
+            "UPDATE entries SET body = ?1, updated_at = ?2, version = ?3 WHERE rowid = ?4",
+            params![new_body, now.to_rfc3339(), new_version, rowid],
+        )?;
+        delete_fts(&tx, *rowid, &prev)?;
+        let mut new_entry = prev.clone();
+        new_entry.body = new_body.clone();
+        new_entry.version = new_version;
+        new_entry.updated_at = now;
+        insert_fts(&tx, *rowid, &new_entry)?;
+        insert_history(&tx, *rowid, &new_entry, now)?;
+    }
+
+    // 4. Delete each entry: drop FTS row, then DELETE FROM entries.
+    //    entry_history rows go with the parent via ON DELETE CASCADE.
+    for (rowid, _id, _kind, _title) in &to_purge {
+        let prev = tx.query_row(
+            "SELECT rowid, ulid, kind, title, body, tags, source, type_data,
+                    natural_key_text, natural_key_hash, created_at, updated_at, version,
+                    deprecated_at, deprecation_reason, superseded_by
+               FROM entries WHERE rowid = ?1",
+            params![rowid],
+            row_to_entry,
+        )?;
+        delete_fts(&tx, *rowid, &prev)?;
+        tx.execute("DELETE FROM entries WHERE rowid = ?1", params![rowid])?;
+    }
+
+    tx.commit()?;
+    Ok(summary)
 }
 
 // =============================================================================
