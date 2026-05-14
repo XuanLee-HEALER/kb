@@ -55,8 +55,10 @@ cp web/tsconfig.json release/web/
 # Systemd units + nginx vhost. Symlinked into /etc by deploy-aliyun.sh.
 cp -r deploy/. release/deploy/
 
+# Skill sources + the pre-built tarball. kb-server's /skill/download
+# endpoint reads kb-skill.tar.gz directly off disk; without it that
+# endpoint 404s and `claude mcp add` via /skill/install can't bootstrap.
 cp -r skill/. release/skill/
-rm -f release/skill/kb-skill.tar.gz
 
 cp README.md release/
 

@@ -60,6 +60,11 @@ if [[ -z "$ONLY" ]]; then
     echo "▶ remote install + restart (full)"
     ssh "$HOST" "set -euo pipefail
       cd /opt/kb
+      # skill/ is fully owned by the tarball — wipe stale entries (old
+      # README.md, mcp.json, dropped examples) before extracting so deploys
+      # don't accumulate cruft. Other top-level dirs (bin, libsimple, web,
+      # deploy) only ever grow, so tar's overwrite semantics are fine.
+      rm -rf skill
       tar -xzf '/tmp/$ART' --no-same-owner
       chown -R kb:kb /opt/kb
 
@@ -103,6 +108,9 @@ else
         skill)
             ssh "$HOST" "set -euo pipefail
               cd /opt/kb
+              # Wipe before extract so dropped files (renamed examples,
+              # removed mcp.json, etc.) don't linger.
+              rm -rf skill
               tar -xzf '/tmp/$ART' --no-same-owner ./skill/
               chown -R kb:kb /opt/kb/skill
               echo '  ✓ skill files refreshed (no restart — kb-server reads /opt/kb/skill at request time)'
