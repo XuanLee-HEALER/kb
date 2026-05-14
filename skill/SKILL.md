@@ -60,40 +60,19 @@ Walk this checklist top-down:
 - "I prefer tokio because…" → **Decision**, not Heuristic. Decisions are points;
   heuristics are processes.
 
-## Write workflow
+## Write & read mechanics
 
-Before writing, do a quick `kb.search` with the natural-key text or a few
-key tokens. This is cheaper than fixing duplicates after the fact.
+The *mechanics* — argument shape, return-status branches, error strings,
+when to choose `update` vs `write+supersedes` vs `deprecate`, the two
+`search` modes — are documented inside each MCP tool's description. Read
+them there; that's the source of truth and it lives next to the schema.
 
-Call `kb.write`. The server runs Layer-1 (exact hash) and Layer-2 (FTS5 with
-`jieba_query` and bm25 `(10, 3, 1)`) dedup. Three outcomes:
+This file is for the higher-level question: should you write at all, and
+which kind. Once those are decided, the tool descriptions tell you how.
 
-- **`status: 'written'`** → done. Note the returned ULID.
-- **`status: 'duplicates_found'`** → pick one:
-  - It's the same thing with new context → `kb.update` (don't write a second
-    entry).
-  - It's a similar thing in a different context → re-call `kb.write` with
-    `dedup: 'force'` + the `proceed_token` from the response. In the body,
-    reference the related entries using `[[ULID]]`.
-  - It supersedes an older entry (you understand better now) → `kb.write` with
-    `supersedes: <old_ulid>`. The old one is atomically marked deprecated.
-
-## Read workflow
-
-Three search paths, in order of cheapness:
-
-1. **Structured** (`kb.search` with `kinds` + `tag_prefixes`, no `query`) —
-   when you know the rough shape. Fastest, no FTS.
-2. **FTS** (`kb.search` with a `query` string) — when you remember keywords but
-   not the exact entry. Uses `simple_query`, bm25 `(5, 5, 1)`, deprecated
-   excluded by default.
-3. **Semantic** (`kb.semantic_search`, v3 only) — when you remember the *idea*
-   but not the words. Last resort.
-
-`kb.search` / `kb.recent` return summaries (title + first 120 chars of body)
-without bodies, to keep token cost low. When you need the full entry, call
-`kb.get(id)`. The body may contain `[[ULID]]` references — call `kb.get` on
-those to expand context.
+A v3 `kb.semantic_search` (embedding-based recall) is in the design doc but
+not yet implemented; today the only retrieval paths are `kb.search` (struct
++ FTS) and `kb.recent`.
 
 ## Tag conventions
 

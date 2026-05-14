@@ -2,6 +2,14 @@
 //!
 //! Exposes 7 tools — write / get / update / deprecate / search / recent / stats.
 //! All delegate to the same `crate::store` functions as the REST routes.
+//!
+//! Each `#[tool(description = …)]` below is the client-side contract: when
+//! to call this tool vs. an adjacent one, what the args/returns mean, and
+//! what error strings to expect. SKILL.md covers the higher-level question
+//! of *whether* to write to the KB at all and *which kind* to choose; this
+//! module describes mechanics. The two are designed to be read together
+//! (SKILL.md auto-loaded as a skill, tool descriptions loaded with the
+//! tool schema).
 
 use std::sync::Arc;
 
@@ -131,9 +139,43 @@ pub struct SearchOutput {
 
 #[tool_router]
 impl KbHandler {
-    #[tool(
-        description = "Write a new KB entry. Layer 1+2 dedup runs unless dedup='force' + matching proceed_token."
-    )]
+    #[tool(description = r#"Write a new KB entry.
+
+When to call: after the SKILL.md "should I write" filter passes — i.e. the
+content is delta knowledge (not in a generic LLM's training data) and the kind
+is chosen. Cheap pre-check: run `search` with the title or NK tokens first.
+
+Required: kind (Fact/ProblemSolution/Lesson/Decision/Heuristic), title, source,
+and the kind-specific data fields (see Entry schema). `tags` and `body` optional.
+`dedup` defaults to 'check'.
+
+Returns one of two `WriteResult.status` values — branch on it:
+
+  - "written"            → success. Use the returned `id` and `version`. Done.
+  - "duplicates_found"   → server found Layer-1 (exact NK hash) or Layer-2
+                           (FTS5 jieba_query, bm25 weights 10/3/1) matches.
+                           The response carries `candidates` (id/kind/title)
+                           and a `proceed_token`. Three valid responses:
+      a) Same thing, fresh context  → call `update` on the candidate's id.
+      b) Similar but distinct       → call `write` again with
+                                       dedup="force" + proceed_token, and
+                                       reference the related ids as
+                                       [[ULID]] in body.
+      c) Supersedes an older one    → call `write` with supersedes=<old_id>;
+                                       the old entry is atomically deprecated
+                                       in the same transaction.
+
+Errors (returned as plain strings):
+  - "dedup='force' requires proceed_token"  — passed force without token.
+  - "proceed_token mismatch"                — token doesn't match this NK;
+                                              re-run with dedup='check' to
+                                              get a fresh one.
+  - validation/serde errors                 — kind-specific field missing or
+                                              wrong type.
+
+Never call with dedup='force' without first getting a proceed_token from a
+prior duplicates_found response. That guard exists to prevent accidental
+bypass of dedup."#)]
     async fn write(
         &self,
         Parameters(args): Parameters<WriteArgs>,
@@ -148,7 +190,24 @@ impl KbHandler {
         Ok(Json(WriteOutput { result }))
     }
 
-    #[tool(description = "Fetch a single entry by ULID. Returns even deprecated entries.")]
+    #[tool(description = r#"Fetch a full entry by ULID.
+
+When to call: after `search`/`recent` returned a hit (those only carry a
+120-char summary, no body, no kind-specific fields); or to chase `[[ULID]]`
+references inside another entry's body.
+
+Args: `id` (ULID string). `include_history` is accepted but currently unused
+by the server (history is internal-only).
+
+Returns `{ entry: Entry | null }`. Note:
+  - Deprecated entries ARE returned (unlike `search`, which excludes them by
+    default). Caller should check `entry.deprecated_at` if relevance matters.
+  - Body may contain `[[ULID]]` markers — call `get` recursively on those to
+    walk the supersede / cross-reference graph.
+
+Errors:
+  - ULID parse failure (the `id` is not a valid Crockford-base32 26-char
+    ULID) → returned as the underlying DecodeError text."#)]
     async fn get(&self, Parameters(args): Parameters<GetArgs>) -> Result<Json<GetOutput>, String> {
         let id: Ulid = args
             .id
@@ -164,9 +223,33 @@ impl KbHandler {
         Ok(Json(GetOutput { entry }))
     }
 
-    #[tool(
-        description = "Update fields of an existing entry. Version is bumped; old snapshot kept in history."
-    )]
+    #[tool(description = r#"Patch an existing entry in place.
+
+When to call: the entry is still the right entry, you just need to refine it
+(rephrased title, expanded body, corrected tag, added evidence to a Fact,
+etc.). Bumps `version`; the prior snapshot goes into `entry_history`.
+
+When NOT to call:
+  - The kind needs to change          → use `write` + `supersedes` instead.
+    (Updating across kinds is rejected because it would change the entry's
+    identity / natural key.)
+  - You're capturing a *different* fact that happens to be related
+                                       → use `write` (fresh entry, link via
+                                         [[ULID]] in body).
+  - The entry is wrong and you have a better one
+                                       → use `write` + `supersedes` so the
+                                         old one is auto-deprecated.
+
+Args: `id` (ULID) + `partial` object with any subset of {title, body, tags,
+plus kind-specific data fields}. Omitted fields keep their old values.
+
+Returns `{ id, version }` (new version number, monotonically increased).
+
+Errors:
+  - "kind cannot change on update; supersede instead"  — partial.data had a
+    different kind than the existing entry.
+  - NotFound  — `id` doesn't match any row.
+  - ULID parse failure for `id`."#)]
     async fn update(
         &self,
         Parameters(args): Parameters<UpdateArgs>,
@@ -188,9 +271,31 @@ impl KbHandler {
         }))
     }
 
-    #[tool(
-        description = "Mark an entry as deprecated. No successor (use kb.write with `supersedes` for that)."
-    )]
+    #[tool(description = r#"Mark an entry as deprecated WITHOUT a successor.
+
+When to call: the entry is no longer correct/relevant and you have no
+replacement. The entry stays in the DB (auditability) but is excluded from
+`search`/`recent` by default. The `reason` is recorded.
+
+When NOT to call:
+  - You have a better/refined version of the same claim
+                              → use `write` with `supersedes=<old_id>`. That
+                                deprecates the old AND links the new in a
+                                single atomic transaction, which is the right
+                                shape for "I understand this better now".
+  - The entry is salvageable with a tweak
+                              → use `update`.
+
+Args: `id` (ULID), `reason` (non-empty string explaining why).
+
+Returns `{ ok: true }`.
+
+Errors:
+  - "already deprecated"  — entry is already in deprecated state. Idempotent
+                            re-deprecate is rejected on purpose to surface
+                            the question of whether you meant `update` or
+                            `supersedes`.
+  - NotFound, ULID parse failure."#)]
     async fn deprecate(
         &self,
         Parameters(args): Parameters<DeprecateArgs>,
@@ -209,9 +314,37 @@ impl KbHandler {
         Ok(Json(DeprecateOk { ok: true }))
     }
 
-    #[tool(
-        description = "Search entries. Structured filter (kinds + tag prefixes) + optional FTS query."
-    )]
+    #[tool(description = r#"Search entries. Has two modes, picked by whether `query` is set.
+
+Mode A — Structured (no `query`, or `query` is empty/whitespace):
+  Filters by `kinds` + `tag_prefixes`, orders by `updated_at DESC`. No FTS.
+  Use when you already know the rough shape ("latest 5 ProblemSolutions tagged
+  network/*").
+
+Mode B — FTS (`query` non-empty):
+  Runs through libsimple's `simple_query` tokenizer (Chinese + English),
+  scores with bm25 weights (5, 5, 1) on (title, body, NK). `kinds` and
+  `tag_prefixes` further filter. Orders by score ascending (lower = better
+  in SQLite's bm25). Use when you remember keywords but not which entry.
+
+Common args:
+  - `kinds`              — restrict to these EntryKinds. Empty = all.
+  - `tag_prefixes`       — substring match against the JSON-encoded tags
+                           array; works as a cheap facet for path-style tags
+                           like "network/wireguard".
+  - `limit`              — clamped to [1, 200]. Default 20.
+  - `include_deprecated` — default false. Pass true to include deprecated
+                           rows (which `get` always returns).
+
+Returns `{ hits: SearchHit[] }`. Each hit carries `id`, `kind`, `title`,
+`summary_line` (first 120 bytes of body), `tags`, timestamps, optional
+`score` (only in FTS mode), and `deprecated_at` if applicable.
+
+To get the full entry call `get(id)` — `search` deliberately doesn't return
+bodies / kind-specific fields to keep token cost low when scanning.
+
+Errors: rusqlite errors as string (FTS syntax issues are rare since
+simple_query escapes most input)."#)]
     async fn search(
         &self,
         Parameters(args): Parameters<SearchArgs>,
@@ -233,7 +366,19 @@ impl KbHandler {
         Ok(Json(SearchOutput { hits }))
     }
 
-    #[tool(description = "Most recently updated entries.")]
+    #[tool(description = r#"Most recently updated entries, no query / no filtering.
+
+When to call: catching up on what changed lately, or browsing without a
+specific target. For filtered browsing use `search` Mode A instead.
+
+Args:
+  - `n`     — clamped to [1, 200]. Default 20.
+  - `since` — optional RFC3339 timestamp; only entries with
+              `updated_at >= since` are returned.
+
+Returns the same `SearchHit[]` shape as `search` (no `score`). Always
+excludes deprecated entries — there is no override here (by design;
+recent-deprecated is rarely what you want)."#)]
     async fn recent(
         &self,
         Parameters(args): Parameters<RecentArgs>,
@@ -249,9 +394,14 @@ impl KbHandler {
         Ok(Json(SearchOutput { hits }))
     }
 
-    #[tool(
-        description = "Aggregate KB stats: total / active / deprecated, and a breakdown by kind."
-    )]
+    #[tool(description = r#"Aggregate counts. No args.
+
+Returns `{ total, active, deprecated, by_kind: [{ kind, active, deprecated }] }`
+covering the whole KB.
+
+Use to: sanity-check after a bulk import, decide which kind is under-used,
+verify a deprecation went through, etc. Not appropriate for finding specific
+entries — use `search` / `recent` for that."#)]
     async fn stats(&self) -> Result<Json<Stats>, String> {
         let pool = self.state.pool.clone();
         let s = tokio::task::spawn_blocking(move || {
