@@ -51,24 +51,54 @@ x86_64-linux 制品由 CI 在打 tag 时产出。本地复现:`just build-releas
 
 设计文档第 8 节给了 nginx 反代 + Aliyun ECS 拓扑。
 
-## Claude Code skill 安装
+## Claude Code skill + MCP 安装
 
-两种方式。
+KB 走 Claude Code 的标准 skill + MCP 机制。两件事分开:**skill**(SKILL.md + examples,文档级)和 **MCP server**(write/get/search/purge 等工具)。
 
-**A. 让 Claude 自动装(内网推荐)**:在 Claude Code 里说"帮我装 kb skill,指引在 https://kb.lan/skill/install"。Claude 会 GET 这个 endpoint 拿到 install plan,先问你装 user scope 还是 project scope,然后自动下载 + 写 mcp.json(token 已经从 plan 里取到了,你不需要手敲)。
+### A. 让 Claude 自动装(内网推荐)
 
-**B. 手动**:
+在 Claude Code 里说一句:
+
+> 帮我装 kb,指引在 https://kb.lan/skill/install
+
+Claude 会 GET 这个 endpoint,拿到一个结构化 plan,先问你 USER scope 还是 PROJECT scope,然后:
+- 下载 + 解压 skill bundle 到对应位置(`~/.claude/skills/` 或 `./.claude/skills/`)
+- 跑 `claude mcp add` 注册 MCP server(`--scope user` 或 `--scope local`)
+
+两种 scope 都不会把 bearer token 写入 git。
+
+### B. 手动
+
+下载 skill:
 
 ```sh
-curl -fsSL https://kb.your-domain.com/skill/download | tar xz -C ~/.claude/skills/
-$EDITOR ~/.claude/skills/kb-skill/mcp.json   # 填 URL + bearer token
+mkdir -p ~/.claude/skills && curl -fsSL https://kb.lan/skill/download | tar xz -C ~/.claude/skills/
+# 或 project scope:
+# mkdir -p ./.claude/skills && curl -fsSL https://kb.lan/skill/download | tar xz -C ./.claude/skills/
 ```
 
-升级检测(对比远端和本地 VERSION,不同则重跑上面的 install):
+注册 MCP server(用 `claude mcp add`,**不要手编** `~/.claude.json`):
 
 ```sh
-diff <(curl -s https://kb.your-domain.com/skill/version) \
+# 全机器可用
+claude mcp add --transport http kb https://kb.lan/mcp \
+  --header "Authorization: Bearer <YOUR_TOKEN>" --scope user
+
+# 或仅当前项目(token 仍在 ~/.claude.json,不入 git)
+claude mcp add --transport http kb https://kb.lan/mcp \
+  --header "Authorization: Bearer <YOUR_TOKEN>" --scope local
+```
+
+**绝不要用 `--scope project`** — 那会写 `.mcp.json` 到 project root,token 会被 commit 进 git。Skill 内的 `mcp.json` 是占位文档,Claude Code **不**从 skill 目录读 MCP 配置,改它没用。
+
+重启 Claude Code 让新 MCP server 生效。
+
+### 升级检测
+
+```sh
+diff <(curl -s https://kb.lan/skill/version) \
      ~/.claude/skills/kb-skill/VERSION
+# 不同 → 重跑上面的下载步骤;MCP 配置不用动
 ```
 
 ## 测试

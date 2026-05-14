@@ -204,21 +204,17 @@ skill-preview: build-skill
     @echo "Skill bundle at: $(pwd)/skill/kb-skill.tar.gz"
     @ls -lh skill/kb-skill.tar.gz
 
-# Re-runs are safe: an existing mcp.json (URL + bearer token) is preserved.
-# Install the freshly-built skill into ~/.claude/skills/kb-skill/.
+# Install the freshly-built skill bundle into ~/.claude/skills/kb-skill/.
+# MCP registration is separate — run `claude mcp add` (see README).
 install-skill-local: build-skill
     #!/usr/bin/env bash
     set -euo pipefail
     dest="$HOME/.claude/skills/kb-skill"
     mkdir -p "$dest"
-    tar xzf skill/kb-skill.tar.gz -C "$dest" --exclude=mcp.json
-    if [ ! -f "$dest/mcp.json" ]; then
-        tar xzf skill/kb-skill.tar.gz -C "$dest" mcp.json
-        echo "→ first install: edit $dest/mcp.json (URL + bearer token)"
-    else
-        echo "→ kept existing $dest/mcp.json"
-    fi
+    tar xzf skill/kb-skill.tar.gz -C "$dest"
     echo "✓ installed to $dest (VERSION $(cat "$dest/VERSION"))"
+    echo "  MCP: run \`claude mcp add --transport http kb \$KB_URL/mcp \\\\"
+    echo "         --header \"Authorization: Bearer \$KB_TOKEN\" --scope user\` (or --scope local)"
 
 # ─── clean ──────────────────────────────────────────────────────────────────
 

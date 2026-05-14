@@ -2,7 +2,6 @@
 //! examples/, a tar.gz bundle of all of the above, and an install plan that
 //! Claude Code can consume directly.
 
-use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use axum::extract::State;
@@ -11,7 +10,6 @@ use axum::response::IntoResponse;
 use axum::routing::get;
 use axum::{Json, Router};
 use serde::Serialize;
-use serde_json::{json, Value};
 
 use crate::AppState;
 
@@ -91,8 +89,22 @@ struct InstallPlan {
     instructions: String,
     skill_download_url: String,
     mcp_url: String,
-    scopes: BTreeMap<&'static str, &'static str>,
-    mcp_config: Value,
+    scopes: Vec<ScopeOption>,
+}
+
+#[derive(Debug, Serialize)]
+struct ScopeOption {
+    /// What the user sees / chooses: "user" or "project".
+    name: &'static str,
+    description: &'static str,
+    /// Where to extract the skill bundle.
+    skill_dir: &'static str,
+    /// The `--scope` value to pass to `claude mcp add`.
+    /// (For `name=project` we use `local`, NOT `project`, because `project`
+    /// writes `.mcp.json` which is commit-tracked and would leak the token.)
+    mcp_cli_scope: &'static str,
+    /// The exact shell command Claude should run to register the MCP server.
+    mcp_add_command: String,
 }
 
 async fn install(State(state): State<AppState>, headers: HeaderMap) -> impl IntoResponse {
@@ -103,26 +115,39 @@ async fn install(State(state): State<AppState>, headers: HeaderMap) -> impl Into
         .map(|s| s.trim().to_string())
         .unwrap_or_else(|| "unknown".into());
 
-    let token = state.bearer_token.as_deref().unwrap_or("").to_string();
-
+    let token = state.bearer_token.as_deref().unwrap_or("");
     let mcp_url = format!("{base}/mcp");
-    let mcp_config = json!({
-        "mcpServers": {
-            "kb": {
-                "type": "http",
-                "url": mcp_url,
-                "headers": {
-                    "Authorization": format!("Bearer {token}"),
-                },
-            },
-        },
-    });
-
     let skill_download_url = format!("{base}/skill/download");
 
-    let mut scopes = BTreeMap::new();
-    scopes.insert("user", "~/.claude");
-    scopes.insert("project", "./.claude");
+    let mk_cmd = |cli_scope: &str| {
+        format!(
+            "claude mcp add --transport http kb {mcp_url} \
+             --header 'Authorization: Bearer {token}' --scope {cli_scope}"
+        )
+    };
+
+    let scopes = vec![
+        ScopeOption {
+            name: "user",
+            description: "Every project on this machine can use kb. \
+                          Skill lives in ~/.claude/skills; MCP registered \
+                          at user scope in ~/.claude.json (not committed).",
+            skill_dir: "~/.claude/skills",
+            mcp_cli_scope: "user",
+            mcp_add_command: mk_cmd("user"),
+        },
+        ScopeOption {
+            name: "project",
+            description: "Only this repo. Skill lives in ./.claude/skills \
+                          (committable, no secrets); MCP registered at LOCAL \
+                          scope in ~/.claude.json under this project's path \
+                          (not committed). Never use --scope project — that \
+                          writes .mcp.json and would commit the bearer token.",
+            skill_dir: "./.claude/skills",
+            mcp_cli_scope: "local",
+            mcp_add_command: mk_cmd("local"),
+        },
+    ];
 
     let instructions = build_instructions(&skill_download_url);
 
@@ -133,7 +158,6 @@ async fn install(State(state): State<AppState>, headers: HeaderMap) -> impl Into
         skill_download_url,
         mcp_url,
         scopes,
-        mcp_config,
     })
 }
 
@@ -155,45 +179,40 @@ fn derive_base_url(headers: &HeaderMap) -> String {
 
 fn build_instructions(skill_download_url: &str) -> String {
     format!(
-        "Install the kb skill on this machine. Follow these steps in order.
+        "Install the kb skill + MCP server on this machine. Follow in order.
 
-STEP 0 (MANDATORY — do not skip): Ask the user which install scope they want.
-Word it like this:
-  \"Install kb at user scope (~/.claude — every project on this machine sees it) \
-or project scope (./.claude — only this repo)?\"
+STEP 0 (MANDATORY — do not skip): Ask the user which scope they want. Word it \
+exactly like this:
+  \"Install kb at USER scope (every project on this machine can use kb) \
+or PROJECT scope (only this repo)? Either way, the bearer token will not be \
+committed to git.\"
 
-Set $TARGET to ~/.claude (user scope) or ./.claude (project scope) based on \
-their answer. Do not pick a default; wait for the user to choose.
+Pick the matching entry from this response's `scopes` array based on the \
+user's answer. Do not pick a default; wait for them to choose.
 
-STEP 1: Download and unpack the skill bundle (SKILL.md + examples — these are \
-what Claude Code auto-loads when triggered).
-  mkdir -p $TARGET/skills
-  curl -fsSL {url} | tar -xz -C $TARGET/skills/
+STEP 1: Download and unpack the skill bundle.
+  mkdir -p <chosen scope's skill_dir>
+  curl -fsSL {url} | tar -xz -C <chosen scope's skill_dir>/
 
-This creates $TARGET/skills/kb-skill/. The mcp.json inside the tarball is a \
-placeholder for reference only — Claude Code does not register MCP servers \
-from skill directories, so leave it alone.
+This creates <skill_dir>/kb-skill/ with SKILL.md, examples/, VERSION, and a \
+placeholder mcp.json. Do NOT modify mcp.json — Claude Code does not read it; \
+it's only documentation. The real MCP wiring happens in the next step.
 
-STEP 2 (this is what actually wires up the MCP server): Merge the \
-`mcp_config` field from this response into $TARGET/settings.local.json.
-  - settings.local.json is .gitignore'd by Claude Code convention, so it is \
-safe to put the bearer token here.
-  - If $TARGET/settings.local.json already exists, parse it as JSON, merge \
-mcp_config.mcpServers.kb into its mcpServers object (preserving any other \
-servers), and write it back with two-space indentation.
-  - If it doesn't exist, create it with the full mcp_config from this response \
-as the file body (it already has the right shape: {{ \"mcpServers\": {{ \"kb\": \
-{{...}} }} }}).
-  - DO NOT write to $TARGET/settings.json. That file is typically committed to \
-git and would leak the bearer token.
+STEP 2: Register the MCP server by running the chosen scope's `mcp_add_command` \
+shell command verbatim (it already has the URL, bearer token, and --scope \
+baked in). The command writes into ~/.claude.json:
+  - USER scope → top-level mcpServers.kb (loads in every project)
+  - PROJECT scope → projects.<this-repo>.mcpServers.kb (loads only here)
+Both are kept out of git. The CLI ships with Claude Code; do not edit \
+~/.claude.json by hand, and do not use `--scope project` (that would write \
+.mcp.json which is commit-tracked).
 
-STEP 3: Tell the user installation is complete, mention which scope they chose \
-and that the MCP server is registered in $TARGET/settings.local.json, and ask \
-them to restart Claude Code so the new MCP server is picked up.
+STEP 3: Tell the user installation is done — name the scope they chose, the \
+skill_dir, and that they should restart Claude Code so the new MCP server is \
+picked up.
 
-Do not run other commands. Do not edit anything outside \
-$TARGET/skills/kb-skill/ and $TARGET/settings.local.json. Do not echo the \
-bearer token to the user — just write it into settings.local.json.",
+Do not run other commands. Do not echo the bearer token back to the user — \
+it's already in the mcp_add_command and they don't need to see it.",
         url = skill_download_url
     )
 }

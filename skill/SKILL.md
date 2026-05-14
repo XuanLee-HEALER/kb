@@ -106,6 +106,6 @@ kind.
 
 ## Connection
 
-Server endpoint is configured in `mcp.json`. The token is provisioned per
-user — ask the human if you don't have one. The KB is single-user; sharing the
-token is sharing the KB.
+The MCP server is registered via `claude mcp add` (see the repo README's
+"安装" section). The token is provisioned per user — ask the human if you
+don't have one. The KB is single-user; sharing the token is sharing the KB.
