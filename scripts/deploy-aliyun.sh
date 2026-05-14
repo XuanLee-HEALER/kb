@@ -10,12 +10,35 @@
 # Every step is idempotent; running twice with the same tag is a no-op
 # beyond the systemctl restart.
 #
-# Usage: scripts/deploy-aliyun.sh <release-tag>           (e.g. v0.1.0)
-#        KB_DEPLOY_HOST=other-host scripts/deploy-aliyun.sh v0.1.0
+# Usage:
+#   scripts/deploy-aliyun.sh <release-tag>                  # full deploy
+#   scripts/deploy-aliyun.sh <release-tag> --only=server    # only bin/ + restart kb-server
+#   scripts/deploy-aliyun.sh <release-tag> --only=web       # only web/  + restart kb-web
+#   scripts/deploy-aliyun.sh <release-tag> --only=skill     # only skill/ (no restart — server reads at request time)
+#   scripts/deploy-aliyun.sh <release-tag> --only=configs   # only deploy/ + daemon-reload + nginx -s reload
+#
+# Env: KB_DEPLOY_HOST=other-host overrides the default `aliyun`.
 
 set -euo pipefail
 
-TAG="${1:?usage: $0 <release-tag>}"
+TAG=""
+ONLY=""
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --only=*) ONLY="${1#--only=}"; shift ;;
+        --only)   ONLY="${2:-}"; shift 2 ;;
+        -*)       echo "✗ unknown flag: $1" >&2; exit 2 ;;
+        *)
+            if [[ -z "$TAG" ]]; then TAG="$1"; shift
+            else echo "✗ unexpected positional arg: $1" >&2; exit 2; fi ;;
+    esac
+done
+[[ -n "$TAG" ]] || { echo "usage: $0 <release-tag> [--only=server|web|skill|configs]" >&2; exit 2; }
+case "$ONLY" in
+    ""|server|web|skill|configs) ;;
+    *) echo "✗ --only must be one of: server, web, skill, configs (got: $ONLY)" >&2; exit 2 ;;
+esac
+
 ART="kb-release-linux-x86_64.tar.gz"
 HOST="${KB_DEPLOY_HOST:-aliyun}"
 REPO_ROOT=$(cd "$(dirname "$0")/.." && pwd)
@@ -29,31 +52,83 @@ gh release download "$TAG" -p "$ART" -D "$STAGING" --clobber
 echo "▶ scp to $HOST"
 scp "$STAGING/$ART" "$HOST:/tmp/"
 
-echo "▶ remote install + restart"
-ssh "$HOST" "set -euo pipefail
-  cd /opt/kb
-  tar -xzf '/tmp/$ART' --no-same-owner
-  chown -R kb:kb /opt/kb
+# Remote step. For a full deploy we keep the original 'extract everything +
+# (re-)symlink units + enable+restart both services + nginx reload' flow.
+# For --only=X we touch the minimum needed: extract only that subtree, then
+# restart only the affected service.
+if [[ -z "$ONLY" ]]; then
+    echo "▶ remote install + restart (full)"
+    ssh "$HOST" "set -euo pipefail
+      cd /opt/kb
+      tar -xzf '/tmp/$ART' --no-same-owner
+      chown -R kb:kb /opt/kb
 
-  ln -sf /opt/kb/deploy/kb-server.service /etc/systemd/system/kb-server.service
-  ln -sf /opt/kb/deploy/kb-web.service    /etc/systemd/system/kb-web.service
-  ln -sf /opt/kb/deploy/kb.lan.conf       /etc/nginx/sites-available/kb.lan
-  ln -sf /etc/nginx/sites-available/kb.lan /etc/nginx/sites-enabled/kb.lan
+      ln -sf /opt/kb/deploy/kb-server.service /etc/systemd/system/kb-server.service
+      ln -sf /opt/kb/deploy/kb-web.service    /etc/systemd/system/kb-web.service
+      ln -sf /opt/kb/deploy/kb.lan.conf       /etc/nginx/sites-available/kb.lan
+      ln -sf /etc/nginx/sites-available/kb.lan /etc/nginx/sites-enabled/kb.lan
 
-  systemctl daemon-reload
-  systemctl enable --now kb-server kb-web
-  systemctl restart kb-server kb-web
+      systemctl daemon-reload
+      systemctl enable --now kb-server kb-web
+      systemctl restart kb-server kb-web
 
-  nginx -t
-  systemctl reload nginx
+      nginx -t
+      systemctl reload nginx
 
-  systemctl is-active --quiet kb-server && echo '  ✓ kb-server active'
-  systemctl is-active --quiet kb-web    && echo '  ✓ kb-web active'
-"
+      systemctl is-active --quiet kb-server && echo '  ✓ kb-server active'
+      systemctl is-active --quiet kb-web    && echo '  ✓ kb-web active'
+    "
+else
+    echo "▶ remote install + restart (--only=$ONLY)"
+    case "$ONLY" in
+        server)
+            ssh "$HOST" "set -euo pipefail
+              cd /opt/kb
+              tar -xzf '/tmp/$ART' --no-same-owner bin/ libsimple/
+              chown -R kb:kb /opt/kb/bin /opt/kb/libsimple
+              systemctl restart kb-server
+              systemctl is-active --quiet kb-server && echo '  ✓ kb-server active'
+              systemctl is-active --quiet kb-web    && echo '  ✓ kb-web active (carried by PartOf=)'
+            "
+            ;;
+        web)
+            ssh "$HOST" "set -euo pipefail
+              cd /opt/kb
+              tar -xzf '/tmp/$ART' --no-same-owner web/
+              chown -R kb:kb /opt/kb/web
+              systemctl restart kb-web
+              systemctl is-active --quiet kb-web && echo '  ✓ kb-web active'
+            "
+            ;;
+        skill)
+            ssh "$HOST" "set -euo pipefail
+              cd /opt/kb
+              tar -xzf '/tmp/$ART' --no-same-owner skill/
+              chown -R kb:kb /opt/kb/skill
+              echo '  ✓ skill files refreshed (no restart — kb-server reads /opt/kb/skill at request time)'
+            "
+            ;;
+        configs)
+            ssh "$HOST" "set -euo pipefail
+              cd /opt/kb
+              tar -xzf '/tmp/$ART' --no-same-owner deploy/
+              chown -R kb:kb /opt/kb/deploy
+              ln -sf /opt/kb/deploy/kb-server.service /etc/systemd/system/kb-server.service
+              ln -sf /opt/kb/deploy/kb-web.service    /etc/systemd/system/kb-web.service
+              ln -sf /opt/kb/deploy/kb.lan.conf       /etc/nginx/sites-available/kb.lan
+              ln -sf /etc/nginx/sites-available/kb.lan /etc/nginx/sites-enabled/kb.lan
+              systemctl daemon-reload
+              nginx -t
+              systemctl reload nginx
+              echo '  ✓ unit files + nginx vhost reloaded (services not restarted)'
+            "
+            ;;
+    esac
+fi
 
 echo "▶ verify via mesh"
 ssh "$HOST" "curl -sSk --connect-timeout 5 -o /dev/null -w 'GET https://kb.lan/api/stats → %{http_code}\\n' \
     --resolve kb.lan:443:10.177.0.1 -H \"Authorization: Bearer \$(grep ^KB_TOKEN= /etc/kb/env | cut -d= -f2)\" \
     https://kb.lan/api/stats || true"
 
-echo "✓ deployed $TAG → $HOST"
+echo "✓ deployed $TAG → $HOST${ONLY:+  (--only=$ONLY)}"

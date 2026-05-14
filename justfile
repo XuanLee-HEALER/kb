@@ -253,9 +253,14 @@ release-watch:
 
 # Roll a release out to aliyun. Pulls the GitHub release artifact, scps, restarts.
 # Phase-0/1 manual provisioning must already be done — see deploy/README.md.
+# ONLY = server | web | skill | configs (empty = full deploy).
 #   just deploy v0.1.0
-deploy TAG:
-    bash scripts/deploy-aliyun.sh {{TAG}}
+#   just deploy v0.1.0 server      # bin/ only, restart kb-server
+#   just deploy v0.1.0 web         # web/ only, restart kb-web
+#   just deploy v0.1.0 skill       # skill/ only, no restart
+#   just deploy v0.1.0 configs     # deploy/ only, nginx + systemd reload
+deploy TAG ONLY="":
+    bash scripts/deploy-aliyun.sh {{TAG}} {{ if ONLY != "" { "--only=" + ONLY } else { "" } }}
 
 # List recent GitHub Actions runs across all workflows.
 ci-status:
