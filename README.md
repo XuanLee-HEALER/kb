@@ -53,6 +53,12 @@ x86_64-linux 制品由 CI 在打 tag 时产出。本地复现:`just build-releas
 
 ## Claude Code skill 安装
 
+两种方式。
+
+**A. 让 Claude 自动装(内网推荐)**:在 Claude Code 里说"帮我装 kb skill,指引在 https://kb.lan/skill/install"。Claude 会 GET 这个 endpoint 拿到 install plan,先问你装 user scope 还是 project scope,然后自动下载 + 写 mcp.json(token 已经从 plan 里取到了,你不需要手敲)。
+
+**B. 手动**:
+
 ```sh
 curl -fsSL https://kb.your-domain.com/skill/download | tar xz -C ~/.claude/skills/
 $EDITOR ~/.claude/skills/kb-skill/mcp.json   # 填 URL + bearer token
