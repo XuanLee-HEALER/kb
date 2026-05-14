@@ -58,7 +58,11 @@ cp -r deploy/. release/deploy/
 # Skill sources + the pre-built tarball. kb-server's /skill/download
 # endpoint reads kb-skill.tar.gz directly off disk; without it that
 # endpoint 404s and `claude mcp add` via /skill/install can't bootstrap.
-cp -r skill/. release/skill/
+#
+# Deployed layout on aliyun is flat (`/opt/kb/skill/{SKILL.md,VERSION,…}`)
+# so we read from the kb-skill subdir, NOT skill/ root — define-skill is
+# version-controlled but not part of the kb-server distribution surface.
+cp -r skill/kb-skill/. release/skill/
 
 cp README.md release/
 

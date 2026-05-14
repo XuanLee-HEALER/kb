@@ -10,7 +10,7 @@ export KB_BIND        := env_var_or_default('KB_BIND',        '127.0.0.1:5100')
 export KB_DB          := env_var_or_default('KB_DB',          'data/kb.sqlite')
 export KB_TOKEN       := env_var_or_default('KB_TOKEN',       'dev-only-token-change-me')
 export KB_URL         := env_var_or_default('KB_URL',         'http://127.0.0.1:5100')
-export KB_SKILL_DIR   := env_var_or_default('KB_SKILL_DIR',   justfile_directory() + '/skill')
+export KB_SKILL_DIR   := env_var_or_default('KB_SKILL_DIR',   justfile_directory() + '/skill/kb-skill')
 export RUST_LOG       := env_var_or_default('RUST_LOG',       'info,kb_server=debug')
 export PORT           := env_var_or_default('PORT',           '5101')
 
@@ -65,7 +65,7 @@ build-cli:
 build-web:
     cd web && bun run build
 
-# Build the Skill tarball (skill/kb-skill.tar.gz) and stamp VERSION.
+# Build the Skill tarball (skill/kb-skill/kb-skill.tar.gz) and stamp VERSION.
 build-skill:
     bash scripts/build-skill.sh
 
@@ -195,23 +195,23 @@ db-stats:
 
 # ─── Skill ──────────────────────────────────────────────────────────────────
 
-# Print the current skill VERSION.
+# Print the current kb-skill VERSION.
 skill-version:
-    @cat skill/VERSION
+    @cat skill/kb-skill/VERSION
 
 # Serve the skill bundle locally for sanity-checking the /skill/download flow.
 skill-preview: build-skill
-    @echo "Skill bundle at: $(pwd)/skill/kb-skill.tar.gz"
-    @ls -lh skill/kb-skill.tar.gz
+    @echo "Skill bundle at: $(pwd)/skill/kb-skill/kb-skill.tar.gz"
+    @ls -lh skill/kb-skill/kb-skill.tar.gz
 
-# Install the freshly-built skill bundle into ~/.claude/skills/kb-skill/.
+# Install the freshly-built kb-skill bundle into ~/.claude/skills/kb-skill/.
 # MCP registration is separate — run `claude mcp add` (see README).
 install-skill-local: build-skill
     #!/usr/bin/env bash
     set -euo pipefail
     dest="$HOME/.claude/skills/kb-skill"
     mkdir -p "$dest"
-    tar xzf skill/kb-skill.tar.gz -C "$dest"
+    tar xzf skill/kb-skill/kb-skill.tar.gz -C "$dest"
     echo "✓ installed to $dest (VERSION $(cat "$dest/VERSION"))"
     echo "  MCP: run \`claude mcp add --transport http kb \$KB_URL/mcp \\\\"
     echo "         --header \"Authorization: Bearer \$KB_TOKEN\" --scope user\` (or --scope local)"
@@ -222,7 +222,7 @@ install-skill-local: build-skill
 clean:
     cargo clean
     rm -rf web/public/js
-    rm -f skill/kb-skill.tar.gz
+    rm -f skill/kb-skill/kb-skill.tar.gz
     rm -rf release
 
 # Force libsimple to recompile on next cargo build (its build.rs is in kb-server).

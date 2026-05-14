@@ -33,4 +33,4 @@ bun.lockb
 kb-release-*.tar.gz
 
 # Skill bundle artifact (built on demand)
-skill/kb-skill.tar.gz
+skill/kb-skill/kb-skill.tar.gz
