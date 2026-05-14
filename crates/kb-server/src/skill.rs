@@ -198,11 +198,20 @@ This creates <skill_dir>/kb-skill/ with SKILL.md, examples/, VERSION, and a \
 placeholder mcp.json. Do NOT modify mcp.json — Claude Code does not read it; \
 it's only documentation. The real MCP wiring happens in the next step.
 
-STEP 2: Register the MCP server by running the chosen scope's `mcp_add_command` \
-shell command verbatim (it already has the URL, bearer token, and --scope \
-baked in). The command writes into ~/.claude.json:
-  - USER scope → top-level mcpServers.kb (loads in every project)
-  - PROJECT scope → projects.<this-repo>.mcpServers.kb (loads only here)
+STEP 2: Register the MCP server. This step is idempotent — run it whether \
+this is a fresh install or a reinstall/upgrade.
+
+  2a) Run `claude mcp list` and check whether a server named `kb` already \
+exists at the chosen scope. If it does, remove it first:
+        claude mcp remove kb --scope <chosen scope's mcp_cli_scope>
+      `claude mcp add` errors out if `kb` is already registered, so this \
+remove step is required for reinstall/upgrade. Skip it on a clean machine.
+
+  2b) Run the chosen scope's `mcp_add_command` shell command verbatim (it \
+already has the URL, bearer token, and --scope baked in). The command writes \
+into ~/.claude.json:
+        - USER scope → top-level mcpServers.kb (loads in every project)
+        - PROJECT scope → projects.<this-repo>.mcpServers.kb (loads only here)
 Both are kept out of git. The CLI ships with Claude Code; do not edit \
 ~/.claude.json by hand, and do not use `--scope project` (that would write \
 .mcp.json which is commit-tracked).
