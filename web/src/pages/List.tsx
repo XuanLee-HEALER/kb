@@ -213,22 +213,27 @@ export function List(props: Props) {
         {!error && baseHits.length > 0 && (
           <div class="lst comfortable">
             {baseHits.map((h) => (
-              <a class={`row ${h.deprecated_at ? "deprecated" : ""}`} href={`/entry/${h.id}`}>
-                <div class="title-line">
-                  <KindBadge kind={h.kind} />
-                  <span class="title">{h.title || "(untitled)"}</span>
-                </div>
-                <div class="meta">
-                  <span>{fmtDate(h.updated_at)}</span>
-                  {q && h.score != null ? (
-                    <span class="score">bm25 {h.score.toFixed(1)}</span>
-                  ) : (
-                    <span style="color: var(--sakya-fg-disabled); font-size: 10px">
-                      id {h.id.slice(0, 8)}
-                    </span>
-                  )}
-                </div>
-                {h.summary_line && <div class="summary">{h.summary_line}</div>}
+              // Row wrapper is a <div>, NOT an <a>: tags below include their
+              // own <a class="tag-mini"> anchors and HTML5 forbids nested
+              // anchors. The inner .row-link uses display:contents so the
+              // grid layout in .row still applies to title-line/meta/summary,
+              // but the link's box vanishes (no nesting from the parser's
+              // POV). Tags sit as a sibling of .row-link, fully outside any
+              // anchor.
+              <div class={`row ${h.deprecated_at ? "deprecated" : ""}`}>
+                <a class="row-link" href={`/entry/${h.id}`}>
+                  <div class="title-line">
+                    <KindBadge kind={h.kind} />
+                    <span class="title">{h.title || "(untitled)"}</span>
+                  </div>
+                  <div class="meta">
+                    <span>{fmtDate(h.updated_at)}</span>
+                    {q && h.score != null && (
+                      <span class="score">bm25 {h.score.toFixed(1)}</span>
+                    )}
+                  </div>
+                  {h.summary_line && <div class="summary">{h.summary_line}</div>}
+                </a>
                 {h.tags.length > 0 && (
                   <div class="tags">
                     {h.tags.map((t) => (
@@ -236,7 +241,7 @@ export function List(props: Props) {
                     ))}
                   </div>
                 )}
-              </a>
+              </div>
             ))}
           </div>
         )}

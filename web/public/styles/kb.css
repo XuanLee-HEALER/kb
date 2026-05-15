@@ -583,9 +583,18 @@ input:focus-visible, textarea:focus-visible, button:focus-visible, [role="button
   gap: 6px 14px;
   padding: 16px 14px 16px 18px;
   border-top: 1px solid var(--sakya-border-subtle);
-  cursor: default;
+  cursor: pointer;
   position: relative;
   transition: background .12s var(--ease);
+}
+/* The inner <a class="row-link"> wraps title-line, meta and summary so that
+   tags below (which contain their own <a class="tag-mini">) are siblings,
+   not nested anchors. display:contents removes the anchor's own box; its
+   children participate directly in .row's grid. */
+.lst.comfortable .row .row-link {
+  display: contents;
+  color: inherit;
+  text-decoration: none;
 }
 .lst.comfortable .row:hover { background: var(--sakya-int-hover); }
 .lst.comfortable .row:hover::before {
