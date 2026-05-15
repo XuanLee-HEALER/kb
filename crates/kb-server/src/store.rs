@@ -515,9 +515,8 @@ pub fn purge(conn: &mut Conn, id: Ulid, dry_run: bool) -> KbResult<PurgeSummary>
                 }
             }
             if count > 0 {
-                let ulid_typed = Ulid::from_string(&ulid_s).map_err(|e| {
-                    KbError::BadRequest(format!("corrupt ulid {ulid_s}: {e}"))
-                })?;
+                let ulid_typed = Ulid::from_string(&ulid_s)
+                    .map_err(|e| KbError::BadRequest(format!("corrupt ulid {ulid_s}: {e}")))?;
                 rewritten.push(RewrittenEntry {
                     id: ulid_typed,
                     refs_count: count,
@@ -564,7 +563,7 @@ pub fn purge(conn: &mut Conn, id: Ulid, dry_run: bool) -> KbResult<PurgeSummary>
         )?;
         delete_fts(&tx, *rowid, &prev)?;
         let mut new_entry = prev.clone();
-        new_entry.body = new_body.clone();
+        new_entry.body.clone_from(new_body);
         new_entry.version = new_version;
         new_entry.updated_at = now;
         insert_fts(&tx, *rowid, &new_entry)?;
@@ -775,7 +774,7 @@ pub fn batch_search(conn: &Conn, queries: &[SearchQuery]) -> KbResult<BatchSearc
     hits.sort_by(|a, b| {
         a.matched_queries[0]
             .cmp(&b.matched_queries[0])
-            .then_with(|| score_cmp(&a.hit.score, &b.hit.score))
+            .then_with(|| score_cmp(a.hit.score.as_ref(), b.hit.score.as_ref()))
             .then_with(|| b.hit.updated_at.cmp(&a.hit.updated_at))
     });
 
@@ -783,7 +782,7 @@ pub fn batch_search(conn: &Conn, queries: &[SearchQuery]) -> KbResult<BatchSearc
 }
 
 /// Order Option<f64> bm25 scores: lower is better; None drops to the back.
-fn score_cmp(a: &Option<f64>, b: &Option<f64>) -> std::cmp::Ordering {
+fn score_cmp(a: Option<&f64>, b: Option<&f64>) -> std::cmp::Ordering {
     match (a, b) {
         (Some(x), Some(y)) => x.partial_cmp(y).unwrap_or(std::cmp::Ordering::Equal),
         (Some(_), None) => std::cmp::Ordering::Less,
@@ -994,11 +993,7 @@ fn escape_like(s: &str) -> String {
 // candidates pool
 // =============================================================================
 
-pub fn deposit_candidate(
-    conn: &mut Conn,
-    content: String,
-    source: Source,
-) -> KbResult<Ulid> {
+pub fn deposit_candidate(conn: &mut Conn, content: String, source: Source) -> KbResult<Ulid> {
     if content.is_empty() {
         return Err(KbError::BadRequest("candidate content is empty".into()));
     }
@@ -1035,8 +1030,10 @@ pub fn list_candidates(conn: &Conn, f: &CandidateFilter) -> KbResult<Vec<Candida
     sql.push_str(&limit.to_string());
 
     let mut stmt = conn.prepare(&sql)?;
-    let refs: Vec<&dyn rusqlite::ToSql> =
-        bindings.iter().map(|b| b.as_ref() as &dyn rusqlite::ToSql).collect();
+    let refs: Vec<&dyn rusqlite::ToSql> = bindings
+        .iter()
+        .map(|b| b.as_ref() as &dyn rusqlite::ToSql)
+        .collect();
     let rows = stmt.query_map(refs.as_slice(), row_to_candidate)?;
     let mut out = Vec::new();
     for r in rows {
@@ -1046,9 +1043,8 @@ pub fn list_candidates(conn: &Conn, f: &CandidateFilter) -> KbResult<Vec<Candida
 }
 
 pub fn get_candidate(conn: &Conn, id: Ulid) -> KbResult<Option<Candidate>> {
-    let mut stmt = conn.prepare(
-        "SELECT ulid, content, source, created_at FROM candidates WHERE ulid = ?1",
-    )?;
+    let mut stmt =
+        conn.prepare("SELECT ulid, content, source, created_at FROM candidates WHERE ulid = ?1")?;
     let row = stmt
         .query_row(params![id.to_string()], row_to_candidate)
         .optional()?;
@@ -1067,16 +1063,14 @@ pub fn discard_candidate(conn: &mut Conn, id: Ulid) -> KbResult<()> {
     }
 }
 
-/// Atomic: open tx, ensure candidate exists, run the normal write path
-/// through `write_in_tx`. On `Written`, DELETE the candidate row in the same
-/// transaction. On `DuplicatesFound`, transaction rolls back via drop —
-/// candidate stays pending so the caller can re-promote with `dedup="force"`
-/// + the returned `proceed_token`, or discard.
-pub fn promote_candidate(
-    conn: &mut Conn,
-    id: Ulid,
-    input: WriteInput,
-) -> KbResult<WriteResult> {
+/// Atomic promote of a pending candidate to a refined entry.
+///
+/// Opens a transaction, ensures the candidate exists, then runs the normal
+/// write path through `write_in_tx`. On `Written`, the candidate row is
+/// DELETEd in the same transaction. On `DuplicatesFound`, the transaction
+/// rolls back via drop — the candidate stays pending so the caller can
+/// re-promote with `dedup="force"` + the returned `proceed_token`, or discard.
+pub fn promote_candidate(conn: &mut Conn, id: Ulid, input: WriteInput) -> KbResult<WriteResult> {
     let tx = conn.transaction()?;
 
     // existence check up-front; cheap, and gives a clean NotFound before

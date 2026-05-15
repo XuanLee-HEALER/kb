@@ -278,7 +278,6 @@ impl JsonSchema for BatchSearchArgs {
     }
 }
 
-
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct UpdateOk {
     pub id: String,
@@ -532,7 +531,8 @@ Errors:
         Ok(Json(DeprecateOk { ok: true }))
     }
 
-    #[tool(description = r#"Search entries. Has two modes, picked by whether `query` is set.
+    #[tool(
+        description = r#"Search entries. Has two modes, picked by whether `query` is set.
 
 Mode A — Structured (no `query`, or `query` is empty/whitespace):
   Filters by `kinds` + `tag_prefixes`, orders by `updated_at DESC`. No FTS.
@@ -562,7 +562,8 @@ To get the full entry call `get(id)` — `search` deliberately doesn't return
 bodies / kind-specific fields to keep token cost low when scanning.
 
 Errors: rusqlite errors as string (FTS syntax issues are rare since
-simple_query escapes most input)."#)]
+simple_query escapes most input)."#
+    )]
     async fn search(
         &self,
         Parameters(args): Parameters<SearchArgs>,
@@ -584,7 +585,8 @@ simple_query escapes most input)."#)]
         Ok(Json(SearchOutput { hits }))
     }
 
-    #[tool(description = r#"Fan out up to 10 independent SearchQuery in one round-trip; return a single dedup'd hit list.
+    #[tool(
+        description = r#"Fan out up to 10 independent SearchQuery in one round-trip; return a single dedup'd hit list.
 
 When to call (preferred over `search`):
   - You are about to `write` and want a thorough pre-existence check — send
@@ -624,7 +626,8 @@ Errors:
     before any DB work.
 
 Cost: 1 LLM round-trip vs N for `search` — favour batch when N >= 2 and
-the queries are independent angles on the same intent."#)]
+the queries are independent angles on the same intent."#
+    )]
     async fn batch_search(
         &self,
         Parameters(args): Parameters<BatchSearchArgs>,
@@ -656,7 +659,8 @@ the queries are independent angles on the same intent."#)]
         Ok(Json(out))
     }
 
-    #[tool(description = r#"Most recently updated entries, no query / no filtering.
+    #[tool(
+        description = r#"Most recently updated entries, no query / no filtering.
 
 When to call: catching up on what changed lately, or browsing without a
 specific target. For filtered browsing use `search` Mode A instead.
@@ -668,7 +672,8 @@ Args:
 
 Returns the same `SearchHit[]` shape as `search` (no `score`). Always
 excludes deprecated entries — there is no override here (by design;
-recent-deprecated is rarely what you want)."#)]
+recent-deprecated is rarely what you want)."#
+    )]
     async fn recent(
         &self,
         Parameters(args): Parameters<RecentArgs>,

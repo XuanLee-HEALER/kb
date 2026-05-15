@@ -605,8 +605,7 @@ fn promote_on_duplicates_leaves_candidate_in_pool() {
     // Seed one fact entry so the next write of the same claim triggers Layer-1.
     let _ = store::write(&mut conn, fact("same exact claim")).unwrap();
 
-    let cand_id =
-        store::deposit_candidate(&mut conn, "raw note".into(), Source::Human).unwrap();
+    let cand_id = store::deposit_candidate(&mut conn, "raw note".into(), Source::Human).unwrap();
     let res = store::promote_candidate(&mut conn, cand_id, fact("same exact claim")).unwrap();
     match res {
         WriteResult::DuplicatesFound { .. } => {}

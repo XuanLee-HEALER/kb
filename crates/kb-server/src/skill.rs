@@ -235,15 +235,21 @@ fn derive_base_url(headers: &HeaderMap) -> String {
     let proto = headers
         .get("x-forwarded-proto")
         .and_then(|v| v.to_str().ok())
-        .unwrap_or_else(|| if host.starts_with("127.0.0.1") || host.starts_with("localhost") {
-            "http"
-        } else {
-            "https"
+        .unwrap_or_else(|| {
+            if host.starts_with("127.0.0.1") || host.starts_with("localhost") {
+                "http"
+            } else {
+                "https"
+            }
         });
     format!("{proto}://{host}")
 }
 
 fn build_instructions(skill_download_url: &str, sediment_hook_script_url: &str) -> String {
+    // Short locals so clippy `uninlined_format_args` is happy without
+    // bloating the template with long identifier names.
+    let url = skill_download_url;
+    let hook_url = sediment_hook_script_url;
     format!(
         "Install the kb skill + MCP server on this machine. Follow in order.
 
@@ -318,8 +324,6 @@ skill_dir, whether the sediment hook was installed, and that they should \
 restart Claude Code so the new MCP server + hooks are picked up.
 
 Do not run other commands. Do not echo the bearer token back to the user — \
-it's already in the mcp_add_command and they don't need to see it.",
-        url = skill_download_url,
-        hook_url = sediment_hook_script_url,
+it's already in the mcp_add_command and they don't need to see it."
     )
 }

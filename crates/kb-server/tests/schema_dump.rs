@@ -1,3 +1,5 @@
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
 use schemars::schema_for;
 
 fn has_top_level_combinator(val: &serde_json::Value) -> bool {

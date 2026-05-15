@@ -354,9 +354,7 @@ async fn post_candidate(
     })
     .await
     .map_err(|e| KbError::Other(anyhow::anyhow!("join error: {e}")))??;
-    Ok(Json(DepositCandidateOk {
-        id: id.to_string(),
-    }))
+    Ok(Json(DepositCandidateOk { id: id.to_string() }))
 }
 
 #[derive(Debug, Deserialize)]
