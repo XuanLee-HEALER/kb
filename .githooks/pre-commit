@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# Pre-commit gate: run the same format + lint checks CI runs, so push-time
+# CI failures (cargo fmt drift, clippy lints, biome lint/format) get caught
+# at commit time rather than after-the-fact emails.
+#
+# Bypass with `git commit --no-verify` when truly needed (e.g. a WIP commit
+# you'll squash before push). Don't make this a habit.
+#
+# Activated via .githooks/ being set as core.hooksPath — run
+# `just install-githooks` once after a fresh clone.
+
+set -e
+
+if ! command -v just >/dev/null 2>&1; then
+    echo "✗ pre-commit: 'just' not installed. either install it or skip with --no-verify." >&2
+    exit 1
+fi
+
+# Skip recipes that touch the network (cargo fetch / bun install) — assume
+# the working tree is consistent. `pre-commit` recipe is fmt-check + lint.
+exec just pre-commit

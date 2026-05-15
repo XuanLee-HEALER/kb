@@ -116,6 +116,20 @@ check: fmt-check lint test build-web
     @echo ""
     @echo "✓ all checks pass — matches what CI runs"
 
+# Fast subset of `check` used by the .githooks/pre-commit gate. Skips test
+# + web build (network-heavy / minutes-long) so commits stay snappy; the
+# trade-off is that broken tests / failing build still slip through pre-commit
+# but get caught in the cloud CI as usual.
+pre-commit: fmt-check lint
+    @echo ""
+    @echo "✓ pre-commit passed"
+
+# Activate the repo-local hooks at .githooks/ so git runs them automatically.
+# Idempotent. Bypass any hook with `git commit --no-verify`.
+install-githooks:
+    git config core.hooksPath .githooks
+    @echo "✓ git core.hooksPath → $(git config core.hooksPath)"
+
 # ─── dev ────────────────────────────────────────────────────────────────────
 
 # Run kb-server + web in parallel. Ctrl+C terminates both.
