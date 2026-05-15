@@ -113,3 +113,12 @@ export interface SearchQuery {
   limit?: number;
   include_deprecated?: boolean;
 }
+
+// Raw candidate from the sediment pool (deposited by hook, awaiting human
+// review). Promote → becomes an Entry. Discard → row physically removed.
+export interface Candidate {
+  id: string;
+  content: string;
+  source: Source;
+  created_at: string;
+}

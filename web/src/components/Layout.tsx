@@ -4,15 +4,24 @@ import { Sidebar } from "./Sidebar";
 
 interface Props {
   title?: string;
-  active?: "list" | "new" | "stats";
+  active?: "list" | "new" | "stats" | "pool";
   activeKind?: EntryKind;
   activeTag?: string | null;
   showingDeprecated?: boolean;
+  showingPool?: boolean;
   children: Child;
 }
 
 export async function Layout(props: Props) {
-  const { title = "KB", active, activeKind, activeTag, showingDeprecated, children } = props;
+  const {
+    title = "KB",
+    active,
+    activeKind,
+    activeTag,
+    showingDeprecated,
+    showingPool,
+    children,
+  } = props;
   return (
     <html lang="zh-CN">
       <head>
@@ -35,6 +44,7 @@ export async function Layout(props: Props) {
             activeKind={activeKind}
             activeTag={activeTag}
             showingDeprecated={showingDeprecated}
+            showingPool={showingPool}
           />
           <main class="main">
             <div class="main-inner">{children}</div>

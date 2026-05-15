@@ -18,7 +18,16 @@ interface Props {
 export function List(props: Props) {
   const { hits, error, q, activeKind, tag, includeDeprecated, url } = props;
 
-  const baseHits = includeDeprecated ? hits : hits.filter((h) => !h.deprecated_at);
+  // "Deprecated" sidebar tab = d=1 with no other filters → show ONLY deprecated.
+  // "show deprecated" toggle on a kind/tag/search view = include deprecated
+  // alongside active. Both share `includeDeprecated=true`, disambiguated by
+  // whether there's any other active filter.
+  const isDeprecatedOnlyView = includeDeprecated && !activeKind && !tag && !q;
+  const baseHits = isDeprecatedOnlyView
+    ? hits.filter((h) => h.deprecated_at)
+    : includeDeprecated
+      ? hits
+      : hits.filter((h) => !h.deprecated_at);
   const kindCounts: Record<string, number> = {};
   for (const k of KINDS) kindCounts[k] = baseHits.filter((h) => h.kind === k).length;
 
@@ -72,12 +81,14 @@ export function List(props: Props) {
                     {tag}
                   </span>
                 </>
+              ) : isDeprecatedOnlyView ? (
+                "Deprecated"
               ) : (
                 "All entries"
               )}
             </h1>
             <div class="ph-sub">
-              {hits.length} {hits.length === 1 ? "entry" : "entries"}
+              {baseHits.length} {baseHits.length === 1 ? "entry" : "entries"}
               {q && <> · searching "{q}"</>}
             </div>
           </div>
@@ -176,21 +187,32 @@ export function List(props: Props) {
           </div>
         )}
 
-        {!error && hits.length === 0 && (
+        {!error && baseHits.length === 0 && (
           <div class="empty">
             <Stripe3 vertical={false} />
-            <h3>No entries match.</h3>
+            <h3>
+              {isDeprecatedOnlyView ? "No deprecated entries." : "No entries match."}
+            </h3>
             <p style="max-width: 380px; margin-top: 8px;">
-              Try clearing a filter, or <a href="/">show everything</a>.
+              {isDeprecatedOnlyView ? (
+                <>
+                  Nothing has been deprecated yet.{" "}
+                  <a href="/">Back to all entries</a>.
+                </>
+              ) : (
+                <>
+                  Try clearing a filter, or <a href="/">show everything</a>.
+                </>
+              )}
               <br />
               <span style="color: var(--sakya-fg-disabled)">清空筛选条件,或创建一条新条目。</span>
             </p>
           </div>
         )}
 
-        {!error && hits.length > 0 && (
+        {!error && baseHits.length > 0 && (
           <div class="lst comfortable">
-            {hits.map((h) => (
+            {baseHits.map((h) => (
               <a class={`row ${h.deprecated_at ? "deprecated" : ""}`} href={`/entry/${h.id}`}>
                 <div class="title-line">
                   <KindBadge kind={h.kind} />

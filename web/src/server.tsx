@@ -27,6 +27,7 @@ import { Duplicates, serializeHidden } from "./pages/Duplicates";
 import { Edit } from "./pages/Edit";
 import { List } from "./pages/List";
 import { New } from "./pages/New";
+import { Pending } from "./pages/Pending";
 import { Stats as StatsPage } from "./pages/Stats";
 
 const app = new Hono();
@@ -250,6 +251,29 @@ app.post("/api/entries/:id/deprecate", async (c) => {
     return c.text(`deprecate failed: ${(e as Error).message}`, 500);
   }
   return c.redirect(`/entry/${id}`, 303);
+});
+
+// ── pending pool ────────────────────────────────────────────────────────────
+
+app.get("/pool", async (c) => {
+  let candidates: Awaited<ReturnType<typeof kb.listCandidates>> = [];
+  let error: string | null = null;
+  try {
+    candidates = await kb.listCandidates({ limit: 200 });
+  } catch (e) {
+    error = (e as Error).message;
+  }
+  return c.html(<Pending candidates={candidates} error={error} />);
+});
+
+app.post("/api/candidates/:id/discard", async (c) => {
+  const id = c.req.param("id");
+  try {
+    await kb.discardCandidate(id);
+  } catch (e) {
+    return c.text(`discard failed: ${(e as Error).message}`, 500);
+  }
+  return c.redirect("/pool", 303);
 });
 
 // ── boot ────────────────────────────────────────────────────────────────────

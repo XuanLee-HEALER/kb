@@ -4,23 +4,32 @@ import type { EntryKind, Stats } from "../lib/types";
 import { Stripe3 } from "./Stripe3";
 
 interface Props {
-  active?: "list" | "stats" | "new";
+  active?: "list" | "stats" | "new" | "pool";
   activeKind?: EntryKind;
   activeTag?: string | null;
   showingDeprecated?: boolean;
+  showingPool?: boolean;
 }
 
 type TagCount = { count: number; children: Record<string, number> };
 
 export async function Sidebar(props: Props) {
-  const { active, activeKind, activeTag, showingDeprecated } = props;
+  const { active, activeKind, activeTag, showingDeprecated, showingPool } = props;
 
   let stats: Stats | null = null;
+  let poolSize = 0;
   const tagCounts: Record<string, TagCount> = {};
   let totalEntries = 0;
 
   try {
     stats = await kb.stats();
+    // listCandidates may not be wired on older servers — silently fallback to 0.
+    try {
+      const candidates = await kb.listCandidates({ limit: 200 });
+      poolSize = candidates.length;
+    } catch {
+      poolSize = 0;
+    }
     const hits = await kb.search({ limit: 200, include_deprecated: false });
     for (const h of hits) {
       for (const t of h.tags) {
@@ -127,6 +136,11 @@ export async function Sidebar(props: Props) {
             </a>
           );
         })}
+        <a class={`sb-item ${showingPool ? "active" : ""}`} href="/pool">
+          <span class="dot" style="background: var(--sakya-accent-secondary, #d4a017)" />
+          <span class="lbl">Pending pool</span>
+          <span class="count">{poolSize}</span>
+        </a>
         <a class={`sb-item ${showingDeprecated ? "active" : ""}`} href="/?d=1">
           <span class="dot" style="background: var(--sakya-fg-disabled)" />
           <span class="lbl" style="color: var(--sakya-fg-tertiary)">

@@ -2,7 +2,7 @@
 // `src/pages/api/*` endpoints — never from client bundles, so KB_TOKEN never
 // leaks to the browser.
 
-import type { Entry, SearchHit, SearchQuery, Stats, WriteResult } from "./types";
+import type { Candidate, Entry, SearchHit, SearchQuery, Stats, WriteResult } from "./types";
 
 const URL_BASE = process.env.KB_URL ?? "http://127.0.0.1:7890";
 const TOKEN = process.env.KB_TOKEN ?? "";
@@ -48,5 +48,15 @@ export const kb = {
   },
   stats(): Promise<Stats> {
     return req<Stats>("GET", "/api/stats");
+  },
+  listCandidates(opts: { since?: string; limit?: number } = {}): Promise<Candidate[]> {
+    const params = new URLSearchParams();
+    if (opts.since) params.set("since", opts.since);
+    if (opts.limit) params.set("limit", String(opts.limit));
+    const qs = params.toString();
+    return req<Candidate[]>("GET", `/api/candidates${qs ? `?${qs}` : ""}`);
+  },
+  discardCandidate(id: string): Promise<void> {
+    return req("DELETE", `/api/candidates/${id}`);
   },
 };
