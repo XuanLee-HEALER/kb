@@ -190,14 +190,11 @@ export function List(props: Props) {
         {!error && baseHits.length === 0 && (
           <div class="empty">
             <Stripe3 vertical={false} />
-            <h3>
-              {isDeprecatedOnlyView ? "No deprecated entries." : "No entries match."}
-            </h3>
+            <h3>{isDeprecatedOnlyView ? "No deprecated entries." : "No entries match."}</h3>
             <p style="max-width: 380px; margin-top: 8px;">
               {isDeprecatedOnlyView ? (
                 <>
-                  Nothing has been deprecated yet.{" "}
-                  <a href="/">Back to all entries</a>.
+                  Nothing has been deprecated yet. <a href="/">Back to all entries</a>.
                 </>
               ) : (
                 <>
@@ -228,9 +225,7 @@ export function List(props: Props) {
                   </div>
                   <div class="meta">
                     <span>{fmtDate(h.updated_at)}</span>
-                    {q && h.score != null && (
-                      <span class="score">bm25 {h.score.toFixed(1)}</span>
-                    )}
+                    {q && h.score != null && <span class="score">bm25 {h.score.toFixed(1)}</span>}
                   </div>
                   {h.summary_line && <div class="summary">{h.summary_line}</div>}
                 </a>
