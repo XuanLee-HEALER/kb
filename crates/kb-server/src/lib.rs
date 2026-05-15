@@ -31,6 +31,7 @@ pub struct AppState {
     pub pool: db::Pool,
     pub bearer_token: Option<Arc<str>>,
     pub skill_dir: Option<PathBuf>,
+    pub sediment_hook_dir: Option<PathBuf>,
 }
 
 impl std::fmt::Debug for AppState {
@@ -41,6 +42,7 @@ impl std::fmt::Debug for AppState {
                 &self.bearer_token.as_deref().map(|_| "<set>"),
             )
             .field("skill_dir", &self.skill_dir)
+            .field("sediment_hook_dir", &self.sediment_hook_dir)
             .finish()
     }
 }
@@ -54,11 +56,13 @@ pub async fn run_server(cfg: Config) -> Result<()> {
 
     let bearer_token = std::env::var("KB_TOKEN").ok().map(Arc::from);
     let skill_dir = std::env::var("KB_SKILL_DIR").ok().map(PathBuf::from);
+    let sediment_hook_dir = std::env::var("KB_SEDIMENT_HOOK_DIR").ok().map(PathBuf::from);
 
     let state = AppState {
         pool,
         bearer_token,
         skill_dir,
+        sediment_hook_dir,
     };
 
     let app = Router::new()

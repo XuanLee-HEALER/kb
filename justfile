@@ -11,6 +11,7 @@ export KB_DB          := env_var_or_default('KB_DB',          'data/kb.sqlite')
 export KB_TOKEN       := env_var_or_default('KB_TOKEN',       'dev-only-token-change-me')
 export KB_URL         := env_var_or_default('KB_URL',         'http://127.0.0.1:5100')
 export KB_SKILL_DIR   := env_var_or_default('KB_SKILL_DIR',   justfile_directory() + '/skill/kb-skill')
+export KB_SEDIMENT_HOOK_DIR := env_var_or_default('KB_SEDIMENT_HOOK_DIR', justfile_directory() + '/hooks/sediment')
 export RUST_LOG       := env_var_or_default('RUST_LOG',       'info,kb_server=debug')
 export PORT           := env_var_or_default('PORT',           '5101')
 
@@ -27,6 +28,7 @@ env:
     @echo "KB_TOKEN      = $KB_TOKEN"
     @echo "KB_URL        = $KB_URL"
     @echo "KB_SKILL_DIR  = $KB_SKILL_DIR"
+    @echo "KB_SEDIMENT_HOOK_DIR = $KB_SEDIMENT_HOOK_DIR"
     @echo "RUST_LOG      = $RUST_LOG"
 
 # ─── setup ──────────────────────────────────────────────────────────────────
@@ -215,6 +217,24 @@ install-skill-local: build-skill
     echo "✓ installed to $dest (VERSION $(cat "$dest/VERSION"))"
     echo "  MCP: run \`claude mcp add --transport http kb \$KB_URL/mcp \\\\"
     echo "         --header \"Authorization: Bearer \$KB_TOKEN\" --scope user\` (or --scope local)"
+
+# Install the sediment hook script to ~/.claude/hooks/sediment.sh and print
+# the settings.json snippet for the user to paste into ~/.claude/settings.json.
+install-sediment-hook-local:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    dest="$HOME/.claude/hooks/sediment.sh"
+    mkdir -p "$(dirname "$dest")"
+    cp hooks/sediment/sediment.sh "$dest"
+    chmod +x "$dest"
+    echo "✓ installed $dest"
+    echo
+    echo "Now merge the snippet below into ~/.claude/settings.json under .hooks:"
+    echo "  (preserves existing hooks; adds PreCompact + SessionEnd entries pointing to the script)"
+    echo
+    cat hooks/sediment/settings.snippet.json
+    echo
+    echo "Logs: ~/.cache/kb-sediment/*.log after each fire."
 
 # ─── clean ──────────────────────────────────────────────────────────────────
 

@@ -15,6 +15,7 @@
 #   scripts/deploy-aliyun.sh <release-tag> --only=server    # only bin/ + restart kb-server
 #   scripts/deploy-aliyun.sh <release-tag> --only=web       # only web/  + restart kb-web
 #   scripts/deploy-aliyun.sh <release-tag> --only=skill     # only skill/ (no restart — server reads at request time)
+#   scripts/deploy-aliyun.sh <release-tag> --only=hooks     # only hooks/ (no restart — server reads at request time)
 #   scripts/deploy-aliyun.sh <release-tag> --only=configs   # only deploy/ + daemon-reload + nginx -s reload
 #
 # Env: KB_DEPLOY_HOST=other-host overrides the default `aliyun`.
@@ -33,10 +34,10 @@ while [[ $# -gt 0 ]]; do
             else echo "✗ unexpected positional arg: $1" >&2; exit 2; fi ;;
     esac
 done
-[[ -n "$TAG" ]] || { echo "usage: $0 <release-tag> [--only=server|web|skill|configs]" >&2; exit 2; }
+[[ -n "$TAG" ]] || { echo "usage: $0 <release-tag> [--only=server|web|skill|hooks|configs]" >&2; exit 2; }
 case "$ONLY" in
-    ""|server|web|skill|configs) ;;
-    *) echo "✗ --only must be one of: server, web, skill, configs (got: $ONLY)" >&2; exit 2 ;;
+    ""|server|web|skill|hooks|configs) ;;
+    *) echo "✗ --only must be one of: server, web, skill, hooks, configs (got: $ONLY)" >&2; exit 2 ;;
 esac
 
 ART="kb-release-linux-x86_64.tar.gz"
@@ -60,11 +61,12 @@ if [[ -z "$ONLY" ]]; then
     echo "▶ remote install + restart (full)"
     ssh "$HOST" "set -euo pipefail
       cd /opt/kb
-      # skill/ is fully owned by the tarball — wipe stale entries (old
-      # README.md, mcp.json, dropped examples) before extracting so deploys
-      # don't accumulate cruft. Other top-level dirs (bin, libsimple, web,
-      # deploy) only ever grow, so tar's overwrite semantics are fine.
-      rm -rf skill
+      # skill/ and hooks/ are fully owned by the tarball — wipe stale entries
+      # (old README.md, mcp.json, dropped examples, removed hook scripts)
+      # before extracting so deploys don't accumulate cruft. Other top-level
+      # dirs (bin, libsimple, web, deploy) only ever grow, so tar's overwrite
+      # semantics are fine.
+      rm -rf skill hooks
       tar -xzf '/tmp/$ART' --no-same-owner
       chown -R kb:kb /opt/kb
 
@@ -114,6 +116,15 @@ else
               tar -xzf '/tmp/$ART' --no-same-owner ./skill/
               chown -R kb:kb /opt/kb/skill
               echo '  ✓ skill files refreshed (no restart — kb-server reads /opt/kb/skill at request time)'
+            "
+            ;;
+        hooks)
+            ssh "$HOST" "set -euo pipefail
+              cd /opt/kb
+              rm -rf hooks
+              tar -xzf '/tmp/$ART' --no-same-owner ./hooks/
+              chown -R kb:kb /opt/kb/hooks
+              echo '  ✓ hooks refreshed (no restart — kb-server reads /opt/kb/hooks at request time)'
             "
             ;;
         configs)

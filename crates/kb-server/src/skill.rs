@@ -19,6 +19,7 @@ pub fn router(state: AppState) -> Router {
         .route("/skill/version", get(version))
         .route("/skill/SKILL.md", get(skill_md))
         .route("/skill/install", get(install))
+        .route("/skill/hook/sediment.sh", get(sediment_hook))
         .with_state(state)
 }
 
@@ -27,6 +28,30 @@ fn skill_dir(state: &AppState) -> PathBuf {
         .skill_dir
         .clone()
         .unwrap_or_else(|| PathBuf::from("./skill"))
+}
+
+fn sediment_hook_dir(state: &AppState) -> PathBuf {
+    state
+        .sediment_hook_dir
+        .clone()
+        .unwrap_or_else(|| PathBuf::from("./hooks/sediment"))
+}
+
+async fn sediment_hook(State(state): State<AppState>) -> impl IntoResponse {
+    let path = sediment_hook_dir(&state).join("sediment.sh");
+    match std::fs::read(&path) {
+        Ok(bytes) => (
+            StatusCode::OK,
+            [(header::CONTENT_TYPE, "text/x-shellscript; charset=utf-8")],
+            bytes,
+        )
+            .into_response(),
+        Err(_) => (
+            StatusCode::NOT_FOUND,
+            "sediment.sh not found — hook bundle missing on server",
+        )
+            .into_response(),
+    }
 }
 
 async fn version(State(state): State<AppState>) -> impl IntoResponse {
@@ -90,6 +115,18 @@ struct InstallPlan {
     skill_download_url: String,
     mcp_url: String,
     scopes: Vec<ScopeOption>,
+    sediment_hook: SedimentHook,
+}
+
+#[derive(Debug, Serialize)]
+struct SedimentHook {
+    /// Where to fetch the hook script.
+    script_url: String,
+    /// Conventional path to install on the client. Both `~` and `$HOME`
+    /// resolve at client side, kept as-is.
+    install_path: &'static str,
+    /// JSON snippet to merge into `~/.claude/settings.json` under `.hooks`.
+    settings_snippet: serde_json::Value,
 }
 
 #[derive(Debug, Serialize)]
@@ -149,7 +186,14 @@ async fn install(State(state): State<AppState>, headers: HeaderMap) -> impl Into
         },
     ];
 
-    let instructions = build_instructions(&skill_download_url);
+    let sediment_hook_script_url = format!("{base}/skill/hook/sediment.sh");
+    let sediment_hook = SedimentHook {
+        script_url: sediment_hook_script_url.clone(),
+        install_path: "~/.claude/hooks/sediment.sh",
+        settings_snippet: sediment_hook_settings_snippet(),
+    };
+
+    let instructions = build_instructions(&skill_download_url, &sediment_hook_script_url);
 
     Json(InstallPlan {
         version,
@@ -158,6 +202,28 @@ async fn install(State(state): State<AppState>, headers: HeaderMap) -> impl Into
         skill_download_url,
         mcp_url,
         scopes,
+        sediment_hook,
+    })
+}
+
+fn sediment_hook_settings_snippet() -> serde_json::Value {
+    serde_json::json!({
+        "hooks": {
+            "PreCompact": [
+                { "hooks": [
+                    { "type": "command",
+                      "command": "$HOME/.claude/hooks/sediment.sh",
+                      "timeout": 120 }
+                ] }
+            ],
+            "SessionEnd": [
+                { "hooks": [
+                    { "type": "command",
+                      "command": "$HOME/.claude/hooks/sediment.sh",
+                      "timeout": 120 }
+                ] }
+            ]
+        }
     })
 }
 
@@ -177,7 +243,7 @@ fn derive_base_url(headers: &HeaderMap) -> String {
     format!("{proto}://{host}")
 }
 
-fn build_instructions(skill_download_url: &str) -> String {
+fn build_instructions(skill_download_url: &str, sediment_hook_script_url: &str) -> String {
     format!(
         "Install the kb skill + MCP server on this machine. Follow in order.
 
@@ -216,12 +282,44 @@ Both are kept out of git. The CLI ships with Claude Code; do not edit \
 ~/.claude.json by hand, and do not use `--scope project` (that would write \
 .mcp.json which is commit-tracked).
 
-STEP 3: Tell the user installation is done — name the scope they chose, the \
-skill_dir, and that they should restart Claude Code so the new MCP server is \
-picked up.
+STEP 3 (OPTIONAL — ask the user before proceeding): Install the sediment hook. \
+The sediment hook auto-deposits raw candidates to the kb pool at PreCompact / \
+SessionEnd lifecycle events; you (the user) later run a manual sediment pass \
+via the `mcp__kb__list_candidates` / `mcp__kb__promote_candidate` / \
+`mcp__kb__discard_candidate` MCP tools.
+
+Word the offer like this:
+  \"Install the sediment hook? It runs on every /compact and /clear (and on \
+exit), spends a few cents per fire calling claude haiku to scan the transcript, \
+and POSTs candidate observations to kb's pool. Skipping it just means you'll \
+have to manually invoke any sedimentation you want.\"
+
+If the user agrees:
+  3a) Download the hook script:
+        mkdir -p ~/.claude/hooks
+        curl -fsSL {hook_url} -o ~/.claude/hooks/sediment.sh
+        chmod +x ~/.claude/hooks/sediment.sh
+
+  3b) Merge the `settings_snippet` from this response into \
+~/.claude/settings.json. The snippet has shape \
+`{{\"hooks\": {{\"PreCompact\": [...], \"SessionEnd\": [...]}}}}`. If the file \
+already has `.hooks`, merge by adding entries to the matching event arrays; \
+do not overwrite existing hooks. If `.hooks` is absent, set it to the snippet's \
+value verbatim.
+
+  3c) (Optional) Smoke test: pick a real transcript jsonl from \
+~/.claude/projects/, simulate a hook fire by piping a synthetic JSON to the \
+script, and confirm `/api/candidates` receives entries. The README at \
+~/.claude/skills/kb-skill/../hooks/sediment/README.md has the exact command (or \
+check the source repo).
+
+STEP 4: Tell the user installation is done — name the scope they chose, the \
+skill_dir, whether the sediment hook was installed, and that they should \
+restart Claude Code so the new MCP server + hooks are picked up.
 
 Do not run other commands. Do not echo the bearer token back to the user — \
 it's already in the mcp_add_command and they don't need to see it.",
-        url = skill_download_url
+        url = skill_download_url,
+        hook_url = sediment_hook_script_url,
     )
 }

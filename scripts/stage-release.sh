@@ -64,6 +64,12 @@ cp -r deploy/. release/deploy/
 # version-controlled but not part of the kb-server distribution surface.
 cp -r skill/kb-skill/. release/skill/
 
+# Sediment hook script — kb-server serves it at /skill/hook/sediment.sh
+# (KB_SEDIMENT_HOOK_DIR defaults to ./hooks/sediment relative to the server's
+# working dir, which is /opt/kb on the deploy target).
+mkdir -p release/hooks/sediment
+cp -r hooks/sediment/. release/hooks/sediment/
+
 cp README.md release/
 
 cat > release/README.deploy.txt <<'EOF'
@@ -79,7 +85,8 @@ Layout
     web/public/               static assets (CSS, client JS bundle)
     web/node_modules/         pre-installed deps (no network at deploy)
     web/package.json
-  skill/                      Skill sources (run scripts/build-skill.sh to tarball)
+  skill/                      kb-skill sources + pre-built tarball
+  hooks/sediment/             sediment hook script — served at /skill/hook/sediment.sh
   deploy/                     systemd units + nginx vhost (symlinked into /etc by deploy script)
 
 For deployment instructions see deploy/README.md in the source tree.
