@@ -77,6 +77,30 @@ pub struct BatchSearchOutput {
     pub errors: Vec<BatchSearchError>,
 }
 
+// candidates pool — raw, unrefined inbox; rows live only while pending. See
+// `deposit_candidate` / `list_candidates` / `promote_candidate` / `discard_candidate`.
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct Candidate {
+    #[schemars(with = "String")]
+    pub id: Ulid,
+    pub content: String,
+    pub source: Source,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
+pub struct CandidateFilter {
+    #[serde(default)]
+    pub since: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub limit: Option<u32>,
+}
+
+/// Server-side cap on candidate `content` size (bytes). Hooks should deposit
+/// short observations, not full transcripts.
+pub const CANDIDATE_MAX_CONTENT_BYTES: usize = 16 * 1024;
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
 pub struct PartialEntry {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -109,12 +133,25 @@ pub struct KindCount {
 // =============================================================================
 
 pub fn write(conn: &mut Conn, input: WriteInput) -> KbResult<WriteResult> {
+    let tx = conn.transaction()?;
+    let r = write_in_tx(&tx, input)?;
+    tx.commit()?;
+    Ok(r)
+}
+
+/// Core write logic without commit. Promote-candidate uses this to attach
+/// a `DELETE FROM candidates` into the same transaction.
+///
+/// On `DuplicatesFound` the caller should drop the transaction (rollback);
+/// no rows were inserted but cleaning up before returning is the caller's
+/// responsibility.
+pub(crate) fn write_in_tx(tx: &Transaction<'_>, input: WriteInput) -> KbResult<WriteResult> {
     let nk = natural_key(&input.data);
     let kind = input.data.kind();
 
     // Layer 1+2 dedup, unless the caller passed dedup='force' + matching token.
     if matches!(input.dedup, kb_core::DedupMode::Check) {
-        let outcome = run_dedup(conn, kind, &nk)?;
+        let outcome = run_dedup(tx, kind, &nk)?;
         if let DedupOutcome::Found {
             candidates,
             proceed_token,
@@ -159,16 +196,13 @@ pub fn write(conn: &mut Conn, input: WriteInput) -> KbResult<WriteResult> {
         superseded_by: None,
     };
 
-    let tx = conn.transaction()?;
-    let rowid = insert_entry(&tx, &entry, &nk)?;
-    insert_fts(&tx, rowid, &entry)?;
-    insert_history(&tx, rowid, &entry, now)?;
+    let rowid = insert_entry(tx, &entry, &nk)?;
+    insert_fts(tx, rowid, &entry)?;
+    insert_history(tx, rowid, &entry, now)?;
 
     if let Some(old_ulid) = input.supersedes {
-        deprecate_in_tx(&tx, old_ulid, "superseded".into(), Some(id), now)?;
+        deprecate_in_tx(tx, old_ulid, "superseded".into(), Some(id), now)?;
     }
-
-    tx.commit()?;
 
     Ok(WriteResult::Written { id, version: 1 })
 }
@@ -954,4 +988,129 @@ fn hex(bytes: &[u8]) -> String {
 
 fn escape_like(s: &str) -> String {
     s.replace('%', "\\%").replace('_', "\\_")
+}
+
+// =============================================================================
+// candidates pool
+// =============================================================================
+
+pub fn deposit_candidate(
+    conn: &mut Conn,
+    content: String,
+    source: Source,
+) -> KbResult<Ulid> {
+    if content.is_empty() {
+        return Err(KbError::BadRequest("candidate content is empty".into()));
+    }
+    if content.len() > CANDIDATE_MAX_CONTENT_BYTES {
+        return Err(KbError::BadRequest(format!(
+            "candidate content too large; max {} bytes, got {}",
+            CANDIDATE_MAX_CONTENT_BYTES,
+            content.len()
+        )));
+    }
+    let id = Ulid::new();
+    let now = Utc::now();
+    let source_json = serde_json::to_string(&source)?;
+    conn.execute(
+        "INSERT INTO candidates (ulid, content, source, created_at) VALUES (?1, ?2, ?3, ?4)",
+        params![id.to_string(), content, source_json, now.to_rfc3339()],
+    )?;
+    Ok(id)
+}
+
+pub fn list_candidates(conn: &Conn, f: &CandidateFilter) -> KbResult<Vec<Candidate>> {
+    let limit = f.limit.unwrap_or(50).clamp(1, 200);
+    let mut sql = String::from(
+        "SELECT ulid, content, source, created_at
+           FROM candidates
+          WHERE 1=1",
+    );
+    let mut bindings: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+    if let Some(since) = f.since {
+        sql.push_str(" AND created_at >= ?1");
+        bindings.push(Box::new(since.to_rfc3339()));
+    }
+    sql.push_str(" ORDER BY created_at DESC LIMIT ");
+    sql.push_str(&limit.to_string());
+
+    let mut stmt = conn.prepare(&sql)?;
+    let refs: Vec<&dyn rusqlite::ToSql> =
+        bindings.iter().map(|b| b.as_ref() as &dyn rusqlite::ToSql).collect();
+    let rows = stmt.query_map(refs.as_slice(), row_to_candidate)?;
+    let mut out = Vec::new();
+    for r in rows {
+        out.push(r?);
+    }
+    Ok(out)
+}
+
+pub fn get_candidate(conn: &Conn, id: Ulid) -> KbResult<Option<Candidate>> {
+    let mut stmt = conn.prepare(
+        "SELECT ulid, content, source, created_at FROM candidates WHERE ulid = ?1",
+    )?;
+    let row = stmt
+        .query_row(params![id.to_string()], row_to_candidate)
+        .optional()?;
+    Ok(row)
+}
+
+pub fn discard_candidate(conn: &mut Conn, id: Ulid) -> KbResult<()> {
+    let n = conn.execute(
+        "DELETE FROM candidates WHERE ulid = ?1",
+        params![id.to_string()],
+    )?;
+    if n == 0 {
+        Err(KbError::NotFound)
+    } else {
+        Ok(())
+    }
+}
+
+/// Atomic: open tx, ensure candidate exists, run the normal write path
+/// through `write_in_tx`. On `Written`, DELETE the candidate row in the same
+/// transaction. On `DuplicatesFound`, transaction rolls back via drop —
+/// candidate stays pending so the caller can re-promote with `dedup="force"`
+/// + the returned `proceed_token`, or discard.
+pub fn promote_candidate(
+    conn: &mut Conn,
+    id: Ulid,
+    input: WriteInput,
+) -> KbResult<WriteResult> {
+    let tx = conn.transaction()?;
+
+    // existence check up-front; cheap, and gives a clean NotFound before
+    // any dedup work.
+    let exists: i64 = tx.query_row(
+        "SELECT COUNT(*) FROM candidates WHERE ulid = ?1",
+        params![id.to_string()],
+        |r| r.get(0),
+    )?;
+    if exists == 0 {
+        return Err(KbError::NotFound);
+    }
+
+    let result = write_in_tx(&tx, input)?;
+    if matches!(result, WriteResult::Written { .. }) {
+        tx.execute(
+            "DELETE FROM candidates WHERE ulid = ?1",
+            params![id.to_string()],
+        )?;
+        tx.commit()?;
+    }
+    // DuplicatesFound: drop tx → rollback. Candidate row preserved.
+    Ok(result)
+}
+
+fn row_to_candidate(row: &Row<'_>) -> rusqlite::Result<Candidate> {
+    let ulid_s: String = row.get(0)?;
+    let content: String = row.get(1)?;
+    let source_json: String = row.get(2)?;
+    let created_s: String = row.get(3)?;
+    Ok(Candidate {
+        id: Ulid::from_string(&ulid_s).map_err(json_err)?,
+        content,
+        source: serde_json::from_str(&source_json).map_err(json_err)?,
+        created_at: parse_rfc3339(&created_s).map_err(json_err)?,
+    })
 }

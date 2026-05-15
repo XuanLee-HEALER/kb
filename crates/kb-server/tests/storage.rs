@@ -21,7 +21,7 @@ use kb_core::{DedupMode, Evidence, EvidenceKind, KindData, Source, WriteInput, W
 use kb_server::db;
 use kb_server::dedup::compute_proceed_token;
 use kb_server::migrations;
-use kb_server::store::{self, PartialEntry, SearchQuery};
+use kb_server::store::{self, CandidateFilter, PartialEntry, SearchQuery};
 
 fn fresh_db() -> (tempfile::TempDir, db::Pool) {
     let tmp = tempfile::tempdir().expect("tempdir");
@@ -533,4 +533,112 @@ fn batch_search_empty_queries_returns_empty_output() {
     let out = store::batch_search(&conn, &[]).unwrap();
     assert!(out.hits.is_empty());
     assert!(out.errors.is_empty());
+}
+
+// =============================================================================
+// candidates pool
+// =============================================================================
+
+#[test]
+fn deposit_returns_id_and_lists_back() {
+    let (_t, pool) = fresh_db();
+    let mut conn = pool.get().unwrap();
+    let id = store::deposit_candidate(&mut conn, "observation X".into(), Source::Human).unwrap();
+    let rows = store::list_candidates(&conn, &CandidateFilter::default()).unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].id, id);
+    assert_eq!(rows[0].content, "observation X");
+}
+
+#[test]
+fn list_candidates_orders_recent_first() {
+    let (_t, pool) = fresh_db();
+    let mut conn = pool.get().unwrap();
+    let first = store::deposit_candidate(&mut conn, "first".into(), Source::Human).unwrap();
+    // Sleep ~5ms so created_at can differ even with low-resolution clocks.
+    std::thread::sleep(std::time::Duration::from_millis(5));
+    let second = store::deposit_candidate(&mut conn, "second".into(), Source::Human).unwrap();
+    let rows = store::list_candidates(&conn, &CandidateFilter::default()).unwrap();
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0].id, second);
+    assert_eq!(rows[1].id, first);
+}
+
+#[test]
+fn deposit_rejects_empty_and_oversize() {
+    let (_t, pool) = fresh_db();
+    let mut conn = pool.get().unwrap();
+    let err = store::deposit_candidate(&mut conn, String::new(), Source::Human).unwrap_err();
+    assert!(matches!(err, kb_server::error::KbError::BadRequest(_)));
+    let big = "a".repeat(16 * 1024 + 1);
+    let err = store::deposit_candidate(&mut conn, big, Source::Human).unwrap_err();
+    assert!(matches!(err, kb_server::error::KbError::BadRequest(_)));
+}
+
+#[test]
+fn promote_writes_entry_and_removes_candidate() {
+    let (_t, pool) = fresh_db();
+    let mut conn = pool.get().unwrap();
+    let cand_id =
+        store::deposit_candidate(&mut conn, "raw note about Y".into(), Source::Human).unwrap();
+    let input = fact("Y has the property that Z is monotonically increasing");
+    let res = store::promote_candidate(&mut conn, cand_id, input).unwrap();
+    let entry_id = match res {
+        WriteResult::Written { id, .. } => id,
+        WriteResult::DuplicatesFound { .. } => panic!("unexpected dup on empty kb"),
+    };
+
+    // Candidate row is gone.
+    assert!(store::get_candidate(&conn, cand_id).unwrap().is_none());
+    let rows = store::list_candidates(&conn, &CandidateFilter::default()).unwrap();
+    assert!(rows.is_empty());
+
+    // Entry is reachable.
+    let entry = store::get_by_ulid(&conn, entry_id).unwrap().expect("entry");
+    assert_eq!(entry.id, entry_id);
+}
+
+#[test]
+fn promote_on_duplicates_leaves_candidate_in_pool() {
+    let (_t, pool) = fresh_db();
+    let mut conn = pool.get().unwrap();
+    // Seed one fact entry so the next write of the same claim triggers Layer-1.
+    let _ = store::write(&mut conn, fact("same exact claim")).unwrap();
+
+    let cand_id =
+        store::deposit_candidate(&mut conn, "raw note".into(), Source::Human).unwrap();
+    let res = store::promote_candidate(&mut conn, cand_id, fact("same exact claim")).unwrap();
+    match res {
+        WriteResult::DuplicatesFound { .. } => {}
+        WriteResult::Written { .. } => panic!("expected dup"),
+    }
+    // Candidate row remains.
+    assert!(store::get_candidate(&conn, cand_id).unwrap().is_some());
+}
+
+#[test]
+fn discard_removes_row() {
+    let (_t, pool) = fresh_db();
+    let mut conn = pool.get().unwrap();
+    let id = store::deposit_candidate(&mut conn, "noise".into(), Source::Human).unwrap();
+    store::discard_candidate(&mut conn, id).unwrap();
+    assert!(store::get_candidate(&conn, id).unwrap().is_none());
+}
+
+#[test]
+fn discard_unknown_returns_not_found() {
+    let (_t, pool) = fresh_db();
+    let mut conn = pool.get().unwrap();
+    let bogus = ulid::Ulid::new();
+    let err = store::discard_candidate(&mut conn, bogus).unwrap_err();
+    assert!(matches!(err, kb_server::error::KbError::NotFound));
+}
+
+#[test]
+fn promote_unknown_returns_not_found() {
+    let (_t, pool) = fresh_db();
+    let mut conn = pool.get().unwrap();
+    let bogus = ulid::Ulid::new();
+    let err = store::promote_candidate(&mut conn, bogus, fact("anything")).unwrap_err();
+    assert!(matches!(err, kb_server::error::KbError::NotFound));
 }

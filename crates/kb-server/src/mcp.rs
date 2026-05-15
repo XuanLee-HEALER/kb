@@ -26,7 +26,10 @@ use schemars::{json_schema, JsonSchema, Schema};
 use serde::{Deserialize, Serialize};
 use ulid::Ulid;
 
-use crate::store::{self, BatchSearchOutput, PartialEntry, SearchHit, SearchQuery, Stats};
+use crate::store::{
+    self, BatchSearchOutput, Candidate, CandidateFilter, PartialEntry, SearchHit, SearchQuery,
+    Stats,
+};
 use crate::AppState;
 
 pub fn router(state: AppState) -> Result<Router> {
@@ -285,6 +288,47 @@ pub struct UpdateOk {
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct DeprecateOk {
     pub ok: bool,
+}
+
+// candidates pool — list / promote / discard tools. Deposit is intentionally
+// NOT exposed via MCP: agents either write directly (kb.write) or skip; only
+// hooks deposit raw material, and hooks call POST /api/candidates via REST.
+
+#[derive(Debug, Deserialize, JsonSchema, Default)]
+pub struct ListCandidatesArgs {
+    #[serde(default)]
+    pub since: Option<chrono::DateTime<chrono::Utc>>,
+    #[serde(default)]
+    pub limit: Option<u32>,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct CandidateListOutput {
+    pub candidates: Vec<Candidate>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct PromoteCandidateArgs {
+    pub candidate_id: String,
+    pub entry: kb_core::WriteInput,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct DiscardCandidateArgs {
+    pub candidate_id: String,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct DiscardOk {
+    pub ok: bool,
+}
+
+/// Promote returns the same `WriteResult` discriminated union as `write`;
+/// wrap it so the MCP outputSchema root is an object (not the `oneOf` from
+/// the tagged enum directly). Mirrors `WriteOutput`.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct PromoteOutput {
+    pub result: kb_core::WriteResult,
 }
 
 // MCP outputSchema must have root `"type": "object"`. WriteResult is a
@@ -657,6 +701,121 @@ entries — use `search` / `recent` for that."#)]
         .await
         .map_err(|e| format!("join: {e}"))??;
         Ok(Json(s))
+    }
+
+    #[tool(description = r#"List raw, un-promoted candidates in the pool.
+
+The candidates pool is the inbox for "session is about to compact/exit,
+here is unrefined content that might be worth keeping". Rows live there
+only until they are PROMOTED into a full `Entry` (via `promote_candidate`)
+or DISCARDED (via `discard_candidate`). Either way the row is physically
+removed — the pool only ever holds pending material.
+
+Args:
+  - `since` — optional RFC3339; only candidates with `created_at >= since`.
+  - `limit` — clamped to [1, 200]. Default 50.
+
+Returns `{ candidates: Candidate[] }`, ordered by `created_at DESC` (newest
+first). Each `Candidate` has `id`, `content` (free-form raw text), `source`
+(who/what deposited it), `created_at`.
+
+When to call:
+  - Periodically during a deliberate "sediment" pass — review pending raw
+    material, decide what to promote / discard.
+  - NOT useful for general retrieval — promoted entries live in the normal
+    `entries` table and are reached via `search` / `batch_search` / `get`."#)]
+    async fn list_candidates(
+        &self,
+        Parameters(args): Parameters<ListCandidatesArgs>,
+    ) -> Result<Json<CandidateListOutput>, String> {
+        let filter = CandidateFilter {
+            since: args.since,
+            limit: args.limit,
+        };
+        let pool = self.state.pool.clone();
+        let rows = tokio::task::spawn_blocking(move || {
+            let conn = pool.get().map_err(|e| format!("pool: {e}"))?;
+            store::list_candidates(&conn, &filter).map_err(|e| e.to_string())
+        })
+        .await
+        .map_err(|e| format!("join: {e}"))??;
+        Ok(Json(CandidateListOutput { candidates: rows }))
+    }
+
+    #[tool(description = r#"Atomically promote a candidate to a full Entry.
+
+Combines `kb.write` + candidate-row deletion in a single transaction:
+  1. Verify the candidate exists.
+  2. Run the normal `write` path (Layer-1 exact-hash + Layer-2 FTS dedup)
+     using the provided `entry` (full WriteInput shape — same as `write`).
+  3. On `WriteResult.status == "written"`: DELETE the candidate row + commit.
+     The candidate is gone; the new Entry is reachable via its `id`.
+  4. On `WriteResult.status == "duplicates_found"`: transaction rolls back.
+     The candidate stays pending. Caller has three options:
+       a) re-call `promote_candidate` with `entry.dedup = "force"` and the
+          returned `proceed_token` (write proceeds, candidate gets removed);
+       b) `discard_candidate(candidate_id)` if the dup IS what we wanted;
+       c) `update` the existing entry instead and discard the candidate.
+
+Args:
+  - `candidate_id` (ULID string)
+  - `entry` — full `WriteInput`: `title`, `kind`, kind-specific fields,
+    `source`, optional `body`/`tags`/`supersedes`/`dedup`/`proceed_token`.
+
+NOTE the candidate's own `source` field is NOT auto-carried into the new
+entry — `entry.source` is required and chosen by the caller. If the
+candidate was deposited as `{type:"ClaudeCode", session_id, project, cwd}`
+and you want the promoted entry to credit that origin, copy it explicitly.
+
+Errors:
+  - `NotFound` — `candidate_id` doesn't exist (or was already promoted /
+    discarded; both physically remove the row).
+  - ULID parse failure.
+  - All `write` errors propagate verbatim ("proceed_token mismatch", etc.)."#)]
+    async fn promote_candidate(
+        &self,
+        Parameters(args): Parameters<PromoteCandidateArgs>,
+    ) -> Result<Json<PromoteOutput>, String> {
+        let id: Ulid = args
+            .candidate_id
+            .parse()
+            .map_err(|e: ulid::DecodeError| e.to_string())?;
+        let pool = self.state.pool.clone();
+        let result = tokio::task::spawn_blocking(move || {
+            let mut conn = pool.get().map_err(|e| format!("pool: {e}"))?;
+            store::promote_candidate(&mut conn, id, args.entry).map_err(|e| e.to_string())
+        })
+        .await
+        .map_err(|e| format!("join: {e}"))??;
+        Ok(Json(PromoteOutput { result }))
+    }
+
+    #[tool(description = r#"Discard a candidate. Physically removes the row.
+
+When to call: you've reviewed the raw content and judged it not worth
+promoting into an Entry. No `reason` field — the discard is silent; if
+you want an audit trail of "I looked at this and rejected it", write a
+Lesson / Decision entry yourself.
+
+Errors:
+  - `NotFound` — candidate doesn't exist (already promoted/discarded).
+  - ULID parse failure."#)]
+    async fn discard_candidate(
+        &self,
+        Parameters(args): Parameters<DiscardCandidateArgs>,
+    ) -> Result<Json<DiscardOk>, String> {
+        let id: Ulid = args
+            .candidate_id
+            .parse()
+            .map_err(|e: ulid::DecodeError| e.to_string())?;
+        let pool = self.state.pool.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut conn = pool.get().map_err(|e| format!("pool: {e}"))?;
+            store::discard_candidate(&mut conn, id).map_err(|e| e.to_string())
+        })
+        .await
+        .map_err(|e| format!("join: {e}"))??;
+        Ok(Json(DiscardOk { ok: true }))
     }
 }
 

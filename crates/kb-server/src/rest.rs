@@ -11,6 +11,11 @@
 //!   POST   /batch_search         kb.batch_search (json body — { queries: SearchQuery[] }, max 10)
 //!   GET    /recent
 //!   GET    /stats
+//!   POST   /candidates           candidate deposit (hook-only — NOT exposed via MCP)
+//!   GET    /candidates           list candidates  (mirrors kb.list_candidates)
+//!   GET    /candidates/:ulid     get one candidate
+//!   POST   /candidates/:ulid/promote   atomic promote (mirrors kb.promote_candidate)
+//!   DELETE /candidates/:ulid     discard (mirrors kb.discard_candidate)
 
 use axum::extract::{Path, Query, State};
 use axum::http::{header, HeaderMap, StatusCode};
@@ -23,7 +28,8 @@ use ulid::Ulid;
 
 use crate::error::{KbError, KbResult};
 use crate::store::{
-    self, BatchSearchOutput, PartialEntry, PurgeSummary, SearchHit, SearchQuery, Stats,
+    self, BatchSearchOutput, Candidate, CandidateFilter, PartialEntry, PurgeSummary, SearchHit,
+    SearchQuery, Stats,
 };
 use crate::AppState;
 
@@ -39,6 +45,12 @@ pub fn router(state: AppState) -> Router {
         .route("/api/batch_search", post(post_batch_search))
         .route("/api/recent", get(get_recent))
         .route("/api/stats", get(get_stats))
+        .route("/api/candidates", post(post_candidate).get(get_candidates))
+        .route(
+            "/api/candidates/{ulid}",
+            get(get_candidate).delete(delete_candidate),
+        )
+        .route("/api/candidates/{ulid}/promote", post(post_promote))
         .with_state(state)
 }
 
@@ -310,4 +322,120 @@ async fn get_stats(State(state): State<AppState>, headers: HeaderMap) -> KbResul
     .await
     .map_err(|e| KbError::Other(anyhow::anyhow!("join error: {e}")))??;
     Ok(Json(s))
+}
+
+// =============================================================================
+// candidates pool
+// =============================================================================
+
+#[derive(Debug, Deserialize)]
+pub struct DepositCandidateBody {
+    pub content: String,
+    #[serde(default)]
+    pub source: Option<kb_core::Source>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct DepositCandidateOk {
+    pub id: String,
+}
+
+async fn post_candidate(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<DepositCandidateBody>,
+) -> KbResult<Json<DepositCandidateOk>> {
+    check_auth(&state, &headers)?;
+    let source = body.source.unwrap_or(kb_core::Source::Human);
+    let pool = state.pool.clone();
+    let id = tokio::task::spawn_blocking(move || {
+        let mut conn = pool.get()?;
+        store::deposit_candidate(&mut conn, body.content, source)
+    })
+    .await
+    .map_err(|e| KbError::Other(anyhow::anyhow!("join error: {e}")))??;
+    Ok(Json(DepositCandidateOk {
+        id: id.to_string(),
+    }))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ListCandidatesParams {
+    #[serde(default)]
+    pub since: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub limit: Option<u32>,
+}
+
+async fn get_candidates(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(p): Query<ListCandidatesParams>,
+) -> KbResult<Json<Vec<Candidate>>> {
+    check_auth(&state, &headers)?;
+    let filter = CandidateFilter {
+        since: p.since,
+        limit: p.limit,
+    };
+    let pool = state.pool.clone();
+    let rows = tokio::task::spawn_blocking(move || {
+        let conn = pool.get()?;
+        store::list_candidates(&conn, &filter)
+    })
+    .await
+    .map_err(|e| KbError::Other(anyhow::anyhow!("join error: {e}")))??;
+    Ok(Json(rows))
+}
+
+async fn get_candidate(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(ulid): Path<String>,
+) -> KbResult<Json<Candidate>> {
+    check_auth(&state, &headers)?;
+    let id: Ulid = ulid.parse()?;
+    let pool = state.pool.clone();
+    let row = tokio::task::spawn_blocking(move || {
+        let conn = pool.get()?;
+        store::get_candidate(&conn, id)
+    })
+    .await
+    .map_err(|e| KbError::Other(anyhow::anyhow!("join error: {e}")))??
+    .ok_or(KbError::NotFound)?;
+    Ok(Json(row))
+}
+
+async fn delete_candidate(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(ulid): Path<String>,
+) -> KbResult<StatusCode> {
+    check_auth(&state, &headers)?;
+    let id: Ulid = ulid.parse()?;
+    let pool = state.pool.clone();
+    tokio::task::spawn_blocking(move || {
+        let mut conn = pool.get()?;
+        store::discard_candidate(&mut conn, id)
+    })
+    .await
+    .map_err(|e| KbError::Other(anyhow::anyhow!("join error: {e}")))??;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn post_promote(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(ulid): Path<String>,
+    Json(input): Json<WriteInput>,
+) -> KbResult<Json<WriteResult>> {
+    check_auth(&state, &headers)?;
+    let id: Ulid = ulid.parse()?;
+    let pool = state.pool.clone();
+    let result = tokio::task::spawn_blocking(move || {
+        let mut conn = pool.get()?;
+        store::promote_candidate(&mut conn, id, input)
+    })
+    .await
+    .map_err(|e| KbError::Other(anyhow::anyhow!("join error: {e}")))??;
+    Ok(Json(result))
 }

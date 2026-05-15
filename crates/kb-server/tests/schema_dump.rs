@@ -38,6 +38,18 @@ fn mcp_tool_inputs_have_no_top_level_combinator() {
             "BatchSearchArgs",
             serde_json::to_value(schema_for!(kb_server::mcp::BatchSearchArgs)).unwrap(),
         ),
+        (
+            "ListCandidatesArgs",
+            serde_json::to_value(schema_for!(kb_server::mcp::ListCandidatesArgs)).unwrap(),
+        ),
+        (
+            "PromoteCandidateArgs",
+            serde_json::to_value(schema_for!(kb_server::mcp::PromoteCandidateArgs)).unwrap(),
+        ),
+        (
+            "DiscardCandidateArgs",
+            serde_json::to_value(schema_for!(kb_server::mcp::DiscardCandidateArgs)).unwrap(),
+        ),
     ];
     let mut bad = Vec::new();
     for (name, val) in &pairs {

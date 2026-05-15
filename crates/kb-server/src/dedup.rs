@@ -9,11 +9,10 @@
 //! that token bypasses the check for this exact NK.
 
 use kb_core::{DedupLayer, DuplicateCandidate, EntryKind, NaturalKey};
-use rusqlite::params;
+use rusqlite::{params, Connection};
 use sha2::{Digest, Sha256};
 use ulid::Ulid;
 
-use crate::db::Conn;
 use crate::error::KbResult;
 
 #[derive(Debug)]
@@ -27,7 +26,7 @@ pub enum DedupOutcome {
 
 const LAYER2_LIMIT: u32 = 10;
 
-pub fn run_dedup(conn: &mut Conn, kind: EntryKind, nk: &NaturalKey) -> KbResult<DedupOutcome> {
+pub fn run_dedup(conn: &Connection, kind: EntryKind, nk: &NaturalKey) -> KbResult<DedupOutcome> {
     if let Some(c) = layer1_exact(conn, kind, nk)? {
         return Ok(DedupOutcome::Found {
             candidates: vec![c],
@@ -47,7 +46,7 @@ pub fn run_dedup(conn: &mut Conn, kind: EntryKind, nk: &NaturalKey) -> KbResult<
 }
 
 fn layer1_exact(
-    conn: &Conn,
+    conn: &Connection,
     kind: EntryKind,
     nk: &NaturalKey,
 ) -> KbResult<Option<DuplicateCandidate>> {
@@ -84,7 +83,11 @@ fn layer1_exact(
     }
 }
 
-fn layer2_fts(conn: &Conn, kind: EntryKind, nk: &NaturalKey) -> KbResult<Vec<DuplicateCandidate>> {
+fn layer2_fts(
+    conn: &Connection,
+    kind: EntryKind,
+    nk: &NaturalKey,
+) -> KbResult<Vec<DuplicateCandidate>> {
     let mut stmt = conn.prepare(
         "SELECT e.ulid, e.kind, e.title, e.natural_key_text,
                 bm25(entries_fts, 10.0, 3.0, 1.0) AS score
